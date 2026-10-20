@@ -508,7 +508,8 @@ package struct CaptureOrchestrator: Sendable {
     ) async throws -> [CaptureManifest.DeviceCapture] {
         let buildRunner = XcodeBuildRunner(
             logLevel: config.logLevel.flatMap { Logger.LogLevel(rawValue: $0) } ?? .normal,
-            logDir: logDir
+            logDir: logDir,
+            codeSigningAllowed: config.codeSigningAllowed ?? false
         )
         let simulatorManager = SimulatorManager()
 
