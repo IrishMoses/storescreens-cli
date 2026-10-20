@@ -28,6 +28,7 @@ FONTS = {
     for weight in ["Regular", "SemiBold"]
 }
 INK, MUTED, ACCENT, LINE, PAPER = "#202823", "#56645a", "#b44c2d", "#b9c2b6", "#f0f0e6"
+SUPPORTING_LINE = "Automate simulators and screenshot collection with MCP."
 
 
 def text(value, x, y, size, weight="Regular", color=INK, tracking=0):
@@ -62,13 +63,13 @@ def render(height):
     shift = 72 if social else 0
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="{height}" viewBox="0 0 1280 {height}">',
              '<title>StoreScreens — XCUITest Screenshot Orchestration</title>',
-             '<desc>Set up simulators. Run UI tests. Collect screenshots.</desc>',
+             f'<desc>{escape(SUPPORTING_LINE)}</desc>',
              f'<rect width="1280" height="{height}" fill="{PAPER}"/>',
              f'<path d="M72 {58+shift}h42" stroke="{ACCENT}" stroke-width="3"/>',
              text("CAPTURE / XCUITEST", 126, 64+shift, 18, "SemiBold", ACCENT, 1.5),
              text("StoreScreens", 68, 202+shift, 125, "SemiBold", tracking=-1),
              text("XCUITest Screenshot Orchestration", 72, 267+shift, 42, "SemiBold"),
-             text("Set up simulators. Run UI tests. Collect screenshots.", 72, 316+shift, 28, color=MUTED),
+             text(SUPPORTING_LINE, 72, 316+shift, 28, color=MUTED),
              screen(916, 128+shift, "01"), screen(978, 160+shift, "02"), screen(1040, 192+shift, "03", True),
              f'<path d="M72 {386+shift}H1208" stroke="{LINE}"/>',
              text("storescreens.app", 72, 424+shift, 22, "SemiBold"),
