@@ -200,7 +200,7 @@ package struct CaptureOrchestrator: Sendable {
         eventHandler: @escaping CaptureEventHandler
     ) async throws -> CaptureResult {
         let simulatorManager = SimulatorManager()
-        let buildRunner = XcodeBuildRunner(logLevel: config.logLevel.flatMap { Logger.LogLevel(rawValue: $0) } ?? .normal)
+        let buildRunner = XcodeBuildRunner(logLevel: config.logLevel.flatMap { Logger.LogLevel(rawValue: $0) } ?? .normal, codeSigningAllowed: config.codeSigningAllowed ?? false)
         let outputOrganizer = OutputOrganizer()
 
         // If a persistent DerivedData path is configured, use it directly and skip cleanup.
@@ -893,7 +893,7 @@ package struct CaptureOrchestrator: Sendable {
         eventHandler: @escaping CaptureEventHandler
     ) async throws -> CaptureResult {
         let simulatorManager = SimulatorManager()
-        let buildRunner = XcodeBuildRunner(logLevel: config.logLevel.flatMap { Logger.LogLevel(rawValue: $0) } ?? .normal)
+        let buildRunner = XcodeBuildRunner(logLevel: config.logLevel.flatMap { Logger.LogLevel(rawValue: $0) } ?? .normal, codeSigningAllowed: config.codeSigningAllowed ?? false)
         let outputOrganizer = OutputOrganizer()
 
         // If a persistent DerivedData path is configured, use it directly and skip cleanup.

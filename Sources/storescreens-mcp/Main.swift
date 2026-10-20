@@ -292,6 +292,7 @@ struct StorescreensMCP {
                     "appearances": .object(["type": .string("array"), "description": .string("e.g. [\"light\", \"dark\"]")]),
                     "locales": .object(["type": .string("array"), "description": .string("e.g. [\"en-US\", \"ja\"]")]),
                     "derived_data_path": .object(["type": .string("string"), "description": .string("Persistent DerivedData directory for faster incremental builds. Reused across runs.")]),
+                    "code_signing_allowed": .object(["type": .string("boolean"), "description": .string("Keep simulator signing for apps that require Keychain or app-group entitlements. Default: false.")]),
                     "result_bundle_dir": .object(["type": .string("string"), "description": .string("Keep original .xcresult bundles in unique per-run directories.")]),
                     "screenshots": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
                     "launch_arguments": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
@@ -893,6 +894,7 @@ struct StorescreensMCP {
         if let v = args["test_target"]?.stringValue  { config.testTarget = v }
         if let v = args["test_class"]?.stringValue   { config.testClass = v }
         if let v = args["derived_data_path"]?.stringValue { config.derivedDataPath = (v as NSString).expandingTildeInPath }
+        if let value = args["code_signing_allowed"]?.boolValue { config.codeSigningAllowed = value }
 
         if let value = args["result_bundle_dir"]?.stringValue { config.resultBundleDir = value }
         if let values = args["screenshots"]?.arrayValue { config.screenshots = values.compactMap { $0.stringValue } }

@@ -48,6 +48,10 @@ package struct CaptureConfig: Codable {
     /// When nil, a temporary directory is used and cleaned up after each run.
     package var derivedDataPath: String?
 
+    /// Keep simulator signing for apps whose Keychain or app-group access requires entitlements.
+    /// Default: false, preserving the unsigned capture behavior.
+    package var codeSigningAllowed: Bool?
+
     /// Keep .xcresult bundles here for later collection and failure diagnosis.
     /// Each invocation receives a unique subdirectory. Nil uses temporary bundles.
     package var resultBundleDir: String?
@@ -94,6 +98,7 @@ package struct CaptureConfig: Codable {
         case dismissSystemAlerts = "dismiss_system_alerts"
         case logLevel = "log_level"
         case derivedDataPath = "derived_data_path"
+        case codeSigningAllowed = "code_signing_allowed"
         case resultBundleDir = "result_bundle_dir"
         case keepOldPreviews = "keep_old_previews"
         case localeFlags = "locale_flags"

@@ -3,12 +3,14 @@ import Foundation
 package actor XcodeBuildRunner {
     private let shell = ShellRunner()
     package let logLevel: Logger.LogLevel
+    private let codeSigningAllowed: Bool
     /// Directory where xcodebuild log files are written. Nil means no log files.
     package var logDir: String?
 
-    package init(logLevel: Logger.LogLevel = .normal, logDir: String? = nil) {
+    package init(logLevel: Logger.LogLevel = .normal, logDir: String? = nil, codeSigningAllowed: Bool = false) {
         self.logLevel = logLevel
         self.logDir = logDir
+        self.codeSigningAllowed = codeSigningAllowed
     }
 
     package func setLogDir(_ dir: String) {
@@ -41,7 +43,7 @@ package actor XcodeBuildRunner {
                 "-scheme", scheme,
                 "-derivedDataPath", derivedDataPath,
                 "-destination", "generic/platform=iOS Simulator",
-                "CODE_SIGNING_ALLOWED=NO",
+                "CODE_SIGNING_ALLOWED=\(codeSigningAllowed ? "YES" : "NO")",
                 "ONLY_ACTIVE_ARCH=YES",
                 "EXCLUDED_ARCHS=x86_64",
             ]
@@ -166,7 +168,7 @@ package actor XcodeBuildRunner {
                 "-destination", "platform=iOS Simulator,id=\(destinationUDID)",
                 "-resultBundlePath", resultBundlePath,
                 "-parallel-testing-enabled", "NO",
-                "CODE_SIGNING_ALLOWED=NO",
+                "CODE_SIGNING_ALLOWED=\(codeSigningAllowed ? "YES" : "NO")",
                 "ONLY_ACTIVE_ARCH=YES",
                 "EXCLUDED_ARCHS=x86_64",
             ]
@@ -258,7 +260,7 @@ package actor XcodeBuildRunner {
                 "-scheme", scheme,
                 "-derivedDataPath", derivedDataPath,
                 "-destination", "platform=iOS Simulator,id=\(destinationUDID)",
-                "CODE_SIGNING_ALLOWED=NO",
+                "CODE_SIGNING_ALLOWED=\(codeSigningAllowed ? "YES" : "NO")",
             ]
         }
 
