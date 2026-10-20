@@ -213,9 +213,15 @@ struct StatusCommand: AsyncParsableCommand {
     /// Picks the most useful hint to show under the status table - answers
     /// "what's happening with this app right now and what can I do about it".
     /// Returns nil when nothing actionable jumps out.
-    private func nextActionHint(_ report: StatusReport) -> String? {
-        let openStates: Set<String> = ["WAITING_FOR_REVIEW", "IN_REVIEW", "READY_FOR_REVIEW", "UNRESOLVED_ISSUES"]
-        if let open = report.reviewSubmissions.first(where: { ($0.state.map(openStates.contains) ?? false) }) {
+    func nextActionHint(_ report: StatusReport) -> String? {
+        // Active reviews take precedence over leftover drafts regardless
+        // of the order Apple returns them in. Within a state, prefer the
+        // most recently submitted resource.
+        let submissions = report.reviewSubmissions.sorted {
+            ($0.submittedDate ?? .distantPast) > ($1.submittedDate ?? .distantPast)
+        }
+        for state in ["IN_REVIEW", "WAITING_FOR_REVIEW", "UNRESOLVED_ISSUES", "READY_FOR_REVIEW"] {
+            guard let open = submissions.first(where: { $0.state == state }) else { continue }
             switch open.state {
             case "IN_REVIEW":           return "Apple is reviewing the submission. Withdraw it with `storescreens review-submissions cancel \(open.id)` if needed."
             case "WAITING_FOR_REVIEW":  return "Submission is queued; Apple has not started reviewing yet. Cancel with `storescreens review-submissions cancel \(open.id)` if needed."
@@ -276,7 +282,7 @@ struct StatusCommand: AsyncParsableCommand {
 
     // MARK: - JSON report shape
 
-    private struct StatusReport: Encodable {
+    struct StatusReport: Encodable {
         var error: String?
         var message: String?
         var app: AppInfo?
@@ -302,21 +308,21 @@ struct StatusCommand: AsyncParsableCommand {
         }
     }
 
-    private struct AppInfo: Encodable {
+    struct AppInfo: Encodable {
         var id: String
         var name: String?
         var bundleID: String?
         var primaryLocale: String?
     }
 
-    private struct VersionInfo: Encodable {
+    struct VersionInfo: Encodable {
         var id: String
         var versionString: String?
         var state: String?
         var createdDate: Date?
     }
 
-    private struct SubmissionInfo: Encodable {
+    struct SubmissionInfo: Encodable {
         var id: String
         var state: String?
         var submittedDate: Date?

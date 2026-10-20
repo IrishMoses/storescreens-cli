@@ -145,6 +145,24 @@ struct UploadBuildRunCommand: AsyncParsableCommand {
             }
         }
 
+        // Resolve once so version checks, Xcode provisioning, and upload use
+        // the same key. Local-only archives may still use an Xcode account.
+        let creds: ASCCredentials?
+        do {
+            creds = try ASCCredentialResolver.resolve()
+        } catch ASCCredentialError.notConfigured where buildCfg.skipUpload == true {
+            creds = nil
+        } catch {
+            if dryRun {
+                logger.log("skipping version check (credentials not configured)", level: .warning)
+                creds = nil
+            } else {
+                logger.log("credentials not configured: \(error)", level: .error)
+                print("  run `storescreens auth init` or set ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH")
+                throw ExitCode(1)
+            }
+        }
+
         // Pre-archive version resolution. When uploading, the build must
         // have a marketing version + build number that don't collide with
         // anything already in App Store Connect. Skipped when there's no
@@ -156,8 +174,9 @@ struct UploadBuildRunCommand: AsyncParsableCommand {
             versionState = try? XcodeVersion.read(projectPath: project)
         }
 
-        if buildCfg.skipUpload != true, let xcState = versionState {
+        if buildCfg.skipUpload != true, let xcState = versionState, let creds {
             resolvedVersion = try await resolveAndMaybeBumpVersion(
+                credentials: creds,
                 xcodeState: xcState,
                 project: project!,
                 yamlPath: config,
@@ -224,6 +243,7 @@ struct UploadBuildRunCommand: AsyncParsableCommand {
             archivePath: archivePath,
             derivedDataPath: captureConfig.derivedDataPath,
             allowProvisioningUpdates: shouldAllowProvUpdates,
+            credentials: creds,
             buildSettings: extraBuildSettings,
             lineHandler: verbose ? progress : nil
         )
@@ -241,6 +261,7 @@ struct UploadBuildRunCommand: AsyncParsableCommand {
             exportPath: exportPath,
             exportOptionsPlistPath: exportOptionsPath,
             allowProvisioningUpdates: shouldAllowProvUpdates,
+            credentials: creds,
             lineHandler: verbose ? progress : nil
         )
         logger.log("exported -> \(ipaPath)", level: .success)
@@ -252,14 +273,7 @@ struct UploadBuildRunCommand: AsyncParsableCommand {
         }
 
         // 3. Upload via altool
-        let creds: ASCCredentials
-        do {
-            creds = try ASCCredentialResolver.resolve()
-        } catch {
-            logger.log("credentials not configured: \(error)", level: .error)
-            print("  run `storescreens auth init` or set ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH")
-            throw ExitCode(1)
-        }
+        guard let creds else { throw ExitCode(1) }
         print("  credentials: \(creds.source.rawValue) (keyID \(creds.keyID))")
 
         logger.header("Uploading")
@@ -286,10 +300,8 @@ struct UploadBuildRunCommand: AsyncParsableCommand {
     /// the next legal tuple via `VersionResolver`, and either rewrites the
     /// Xcode project + yml (auto-bump on, default) or throws a
     /// `versionBumpNeeded` error (auto-bump off).
-    ///
-    /// Returns nil when creds are missing (degrade gracefully in dry-run),
-    /// but throws in live mode since you can't upload without creds anyway.
     private func resolveAndMaybeBumpVersion(
+        credentials: ASCCredentials,
         xcodeState: XcodeVersion.State,
         project: String,
         yamlPath: String,
@@ -297,25 +309,9 @@ struct UploadBuildRunCommand: AsyncParsableCommand {
         buildCfg: UploadBuildConfig,
         dryRun: Bool,
         logger: Logger
-    ) async throws -> VersionResolver.Resolution? {
-        let creds: ASCCredentials
-        do {
-            creds = try ASCCredentialResolver.resolve()
-        } catch {
-            if dryRun {
-                logger.log(
-                    "skipping version check (credentials not configured)",
-                    level: .warning
-                )
-                return nil
-            }
-            logger.log("credentials not configured: \(error)", level: .error)
-            print("  run `storescreens auth init` or set ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH")
-            throw ExitCode(1)
-        }
-
+    ) async throws -> VersionResolver.Resolution {
         // Resolve the ASC app record.
-        let client = ASCClient(credentials: creds)
+        let client = ASCClient(credentials: credentials)
         let appsAPI = AppsAPI(client: client)
         let appID: String
         if let id = asc.appID {

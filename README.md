@@ -1824,6 +1824,8 @@ App Store Connect status
 
 `--json` switches to machine-readable output for scripts and CI. `--platform` accepts `IOS` (default), `MAC_OS`, `TV_OS`, `VISION_OS`. Read-only: makes no changes to the app. To act on what it shows (withdraw the queued submission, inspect what Apple rejected), use `storescreens review-submissions` below.
 
+The advisory prioritizes submissions in review or waiting for review over rejected submissions and drafts, regardless of their order in the API response. Leftover drafts remain visible in the table without prompting another submission while review is active.
+
 ### Managing review submissions with `storescreens review-submissions`
 
 `storescreens submit --submit-for-review` drives Apple's `reviewSubmissions` flow automatically. The `review-submissions` family exposes the same resources directly, for the cases the orchestrator deliberately leaves alone: withdrawing a submission Apple has queued or is already reviewing, pulling one item out of a draft, or sending a non-version resource (Custom Product Page version, app event, A/B experiment, Background Assets version, Game Center version) to review by hand.
@@ -1862,6 +1864,8 @@ storescreens upload-build        # xcodebuild archive + exportArchive + altool u
 ```
 
 Reuses the same ASC API credentials as `submit`. Pins `DEVELOPER_DIR` to a production Xcode (auto-detected from `/Applications/Xcode*.app`, excluding Xcode-beta) so a beta `xcode-select -p` can't taint the archive; override with `xcode_path:` or `--xcode-path`.
+
+When provisioning updates are enabled (the default), both archive and export pass the resolved API key to Xcode. An Apple account in Xcode's Accounts settings is not required for API-key provisioning. This also applies to `--skip-upload` when credentials are configured; without API credentials, local-only archives can use an account already added in Xcode. Set `upload_build.allow_provisioning_updates: false` to disable provisioning updates and the Xcode authentication arguments.
 
 Minimum config:
 
@@ -3029,6 +3033,8 @@ storescreens devportal certificates delete CERT_ID
 ```
 
 #### Provisioning profiles
+
+`profiles list --bundle-id` matches the exact reverse-DNS identifier through the profiles' bundle-ID relationships. `--type` still filters on Apple's server. Bundle-ID matching filters each API page locally, so a page may contain fewer than `--limit` results or none; continue with `--cursor` whenever `nextCursor` is present, including after an empty page. The MCP tool `devportal_profiles_list` uses the same behavior.
 
 ```bash
 # Every App Store profile.

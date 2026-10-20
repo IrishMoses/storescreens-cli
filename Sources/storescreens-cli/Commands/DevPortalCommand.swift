@@ -305,7 +305,6 @@ struct DevPortalProfilesListCommand: AsyncParsableCommand {
         logger.header("Profiles (\(result.profiles.count))")
         if result.profiles.isEmpty {
             print("  (none)")
-            return
         }
         for p in result.profiles {
             print("  \(p.attributes?.name ?? "(no name)")")

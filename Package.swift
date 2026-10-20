@@ -63,5 +63,9 @@ let package = Package(
             name: "StorescreensCoreTests",
             dependencies: ["StorescreensCore"]
         ),
+        .testTarget(
+            name: "StorescreensCLITests",
+            dependencies: ["storescreens-cli"]
+        ),
     ]
 )

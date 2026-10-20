@@ -530,6 +530,18 @@ package struct DevPortalAPI {
     package struct Profile: Codable, Sendable {
         package let id: String
         package let attributes: Attributes?
+        package let relationships: Relationships?
+
+        package struct Relationships: Codable, Sendable {
+            package let bundleId: BundleIDRelationship?
+
+            package struct BundleIDRelationship: Codable, Sendable {
+                package let data: Reference?
+                package struct Reference: Codable, Sendable {
+                    package let id: String
+                }
+            }
+        }
 
         package struct Attributes: Codable, Sendable {
             package let name: String?
@@ -543,6 +555,9 @@ package struct DevPortalAPI {
         }
     }
 
+    /// Bundle identifiers are matched through `include=bundleId`; Apple
+    /// does not support `filter[bundleId]` on profiles. A filtered page can
+    /// be empty and still have a next cursor, which callers must follow.
     package func listProfiles(
         type: String? = nil,
         bundleIDFilter: String? = nil,
@@ -552,9 +567,13 @@ package struct DevPortalAPI {
         var query: [String: String] = ["limit": String(limit)]
         if let cursor { query["cursor"] = cursor }
         if let type { query["filter[profileType]"] = type }
-        if let bundleIDFilter { query["filter[bundleId]"] = bundleIDFilter }
+        if bundleIDFilter != nil {
+            query["include"] = "bundleId"
+            query["fields[bundleIds]"] = "identifier"
+        }
         struct Resp: Decodable {
             let data: [Profile]
+            let included: [BundleID]?
             let links: Links?
             struct Links: Decodable { let next: String? }
         }
@@ -563,7 +582,19 @@ package struct DevPortalAPI {
             query: query,
             as: Resp.self
         )
-        return (resp.data, UsersAPI.extractCursor(from: resp.links?.next))
+        let profiles: [Profile]
+        if let bundleIDFilter {
+            let matchingIDs = Set((resp.included ?? [])
+                .filter { $0.attributes?.identifier == bundleIDFilter }
+                .map(\.id))
+            profiles = resp.data.filter { profile in
+                guard let id = profile.relationships?.bundleId?.data?.id else { return false }
+                return matchingIDs.contains(id)
+            }
+        } else {
+            profiles = resp.data
+        }
+        return (profiles, UsersAPI.extractCursor(from: resp.links?.next))
     }
 
     /// GET `/v1/profiles/{id}`. Returns nil on 404.

@@ -6,10 +6,24 @@ import Foundation
 package actor ArchiveRunner {
     package let xcode: XcodeInstall
     package let logLevel: Logger.LogLevel
+    package typealias RunXcodebuild = @Sendable (
+        [String], [String: String], (@Sendable (String) -> Void)?
+    ) async throws -> ProcessResult
+    private let runXcodebuild: RunXcodebuild
 
-    package init(xcode: XcodeInstall, logLevel: Logger.LogLevel = .normal) {
+    package init(
+        xcode: XcodeInstall,
+        logLevel: Logger.LogLevel = .normal,
+        runXcodebuild: @escaping RunXcodebuild = { args, env, handler in
+            try await ShellRunner().run(
+                "/usr/bin/xcodebuild", arguments: args,
+                environment: env, stdoutLineHandler: handler
+            )
+        }
+    ) {
         self.xcode = xcode
         self.logLevel = logLevel
+        self.runXcodebuild = runXcodebuild
     }
 
     /// Runs `xcodebuild archive`.
@@ -28,6 +42,7 @@ package actor ArchiveRunner {
         archivePath: String,
         derivedDataPath: String?,
         allowProvisioningUpdates: Bool,
+        credentials: ASCCredentials? = nil,
         buildSettings: [String: String] = [:],
         lineHandler: (@Sendable (String) -> Void)? = nil
     ) async throws {
@@ -44,23 +59,12 @@ package actor ArchiveRunner {
         if let derivedDataPath {
             args += ["-derivedDataPath", derivedDataPath]
         }
-        if allowProvisioningUpdates {
-            // Lets Xcode contact the dev portal to create/download missing
-            // profiles and certs at archive time under automatic signing.
-            args += ["-allowProvisioningUpdates"]
-        }
-        // Build settings (e.g. INFOPLIST_KEY_*=...) come last so they
-        // override any project defaults.
-        for (key, value) in buildSettings.sorted(by: { $0.key < $1.key }) {
-            args.append("\(key)=\(value)")
-        }
-
-        let env = ["DEVELOPER_DIR": xcode.developerDir]
-        let result = try await ShellRunner().run(
-            "/usr/bin/xcodebuild",
+        let result = try await run(
             arguments: args,
-            environment: env,
-            stdoutLineHandler: lineHandler
+            allowProvisioningUpdates: allowProvisioningUpdates,
+            credentials: credentials,
+            buildSettings: buildSettings,
+            lineHandler: lineHandler
         )
         if logLevel == .verbose {
             print(result.stdout)
@@ -79,24 +83,20 @@ package actor ArchiveRunner {
         exportPath: String,
         exportOptionsPlistPath: String,
         allowProvisioningUpdates: Bool,
+        credentials: ASCCredentials? = nil,
         lineHandler: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
-        var args: [String] = [
+        let args: [String] = [
             "-exportArchive",
             "-archivePath", archivePath,
             "-exportPath", exportPath,
             "-exportOptionsPlist", exportOptionsPlistPath,
         ]
-        if allowProvisioningUpdates {
-            args += ["-allowProvisioningUpdates"]
-        }
-
-        let env = ["DEVELOPER_DIR": xcode.developerDir]
-        let result = try await ShellRunner().run(
-            "/usr/bin/xcodebuild",
+        let result = try await run(
             arguments: args,
-            environment: env,
-            stdoutLineHandler: lineHandler
+            allowProvisioningUpdates: allowProvisioningUpdates,
+            credentials: credentials,
+            lineHandler: lineHandler
         )
         if logLevel == .verbose {
             print(result.stdout)
@@ -115,5 +115,47 @@ package actor ArchiveRunner {
             throw CLIError.exportFailed(reason: "no .ipa produced in \(exportPath)")
         }
         return "\(exportPath)/\(ipa)"
+    }
+
+    /// Keep the resolved key available for the entire Xcode process, then
+    /// remove it even when launching or running Xcode fails.
+    private func run(
+        arguments: [String],
+        allowProvisioningUpdates: Bool,
+        credentials: ASCCredentials?,
+        buildSettings: [String: String] = [:],
+        lineHandler: (@Sendable (String) -> Void)?
+    ) async throws -> ProcessResult {
+        var args = arguments
+        let fm = FileManager.default
+        var keyDirectory: URL?
+        defer {
+            if let keyDirectory { try? fm.removeItem(at: keyDirectory) }
+        }
+        if allowProvisioningUpdates {
+            args.append("-allowProvisioningUpdates")
+            if let credentials {
+                let dir = fm.temporaryDirectory
+                    .appendingPathComponent("storescreens-xcode-\(UUID().uuidString)")
+                keyDirectory = dir
+                try fm.createDirectory(
+                    at: dir, withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
+                let key = dir.appendingPathComponent("AuthKey.p8")
+                try Data(credentials.privateKeyPEM.utf8).write(to: key, options: .atomic)
+                try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: key.path)
+                args += [
+                    "-authenticationKeyPath", key.path,
+                    "-authenticationKeyID", credentials.keyID,
+                    "-authenticationKeyIssuerID", credentials.issuerID,
+                ]
+            }
+        }
+        // Build settings come last so they override project defaults.
+        for (key, value) in buildSettings.sorted(by: { $0.key < $1.key }) {
+            args.append("\(key)=\(value)")
+        }
+        return try await runXcodebuild(args, ["DEVELOPER_DIR": xcode.developerDir], lineHandler)
     }
 }
