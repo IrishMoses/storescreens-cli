@@ -33,14 +33,27 @@ import XCTest
 final class ScreenshotTests: XCTestCase {
 
     private var app: XCUIApplication!
+    private var captureSettings: [String: Any] = [:]
 
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        let hostHome = ProcessInfo.processInfo.environment["SIMULATOR_HOST_HOME"] ?? NSHomeDirectory()
+        let settingsPath = (hostHome as NSString).appendingPathComponent(".storescreens-cache/harness.json")
+        let settings = (try? Data(contentsOf: URL(fileURLWithPath: settingsPath)))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        captureSettings = settings
+        app.launchArguments = settings["launch_arguments"] as? [String] ?? ["--uitesting"]
+        if let locale = settings["locale"] as? String, !locale.isEmpty {
+            let parts = locale.split(separator: "-")
+            let hasScript = parts.count > 1 && parts[1].count == 4
+            let language = hasScript ? parts.prefix(2).joined(separator: "-") : String(parts[0])
+            app.launchArguments += ["-AppleLanguages", "(\(language))", "-AppleLocale", locale.replacingOccurrences(of: "-", with: "_")]
+        }
         app.launch()
 
         // Dismiss any system alerts (e.g. App Store review prompts, notification permissions)
+        if settings["dismiss_system_alerts"] as? Bool != false {
         addUIInterruptionMonitor(withDescription: "System Alert") { alert in
             let dismissLabels = ["Not Now", "Cancel", "No Thanks", "Later", "Don't Allow", "OK"]
             for label in dismissLabels {
@@ -51,6 +64,8 @@ final class ScreenshotTests: XCTestCase {
                 }
             }
             return false
+        }
+
         }
 
         // TODO: Wait for your app's main content to load.
@@ -88,6 +103,12 @@ final class ScreenshotTests: XCTestCase {
     }
 
     private func takeScreenshot(named name: String) {
+        let hostHomeForFilter = ProcessInfo.processInfo.environment["SIMULATOR_HOST_HOME"] ?? NSHomeDirectory()
+        let filterPath = (hostHomeForFilter as NSString).appendingPathComponent(".storescreens-cache/screenshot-filter.txt")
+        if let filter = try? String(contentsOfFile: filterPath, encoding: .utf8) {
+            let prefixes = filter.split(separator: "\n").map(String.init)
+            if !prefixes.isEmpty && !prefixes.contains(where: { name.hasPrefix($0) || name.contains($0) }) { return }
+        }
         guard shouldCapture(named: name) else {
             print("[⏭️] \(name) (skipped by --only filter)")
             return
@@ -111,7 +132,7 @@ final class ScreenshotTests: XCTestCase {
 
         // Strip "Clone N of " prefix - xcodebuild creates clones for parallel test runs,
         // but storescreens-cli expects the original simulator name as the directory key.
-        var deviceName = ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? "Unknown"
+        var deviceName = ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? (captureSettings["mac_device_name"] as? String) ?? "Unknown"
         if let range = deviceName.range(of: #"^Clone \d+ of "#, options: .regularExpression) {
             deviceName = String(deviceName[range.upperBound...])
         }

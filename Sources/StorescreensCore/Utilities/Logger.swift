@@ -13,6 +13,10 @@ package struct Logger {
         self.logLevel = logLevel
     }
 
+    package init(isVerbose: Bool) {
+        self.logLevel = isVerbose ? .verbose : .normal
+    }
+
     package func log(_ message: String, level: Level = .info) {
         switch logLevel {
         case .quiet:

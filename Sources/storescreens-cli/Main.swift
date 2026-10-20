@@ -13,41 +13,12 @@ struct StoreScreensCLI: AsyncParsableCommand {
 
     static let configuration = CommandConfiguration(
         commandName: "storescreens",
-        abstract: "Capture App Store screenshots across iOS simulators and macOS.",
+        abstract: "Set up simulators, run XCUITests, and collect raw screenshots.",
         version: storescreensVersion,
         subcommands: [
-            // Capture / render / setup
-            ListCommand.self, InitCommand.self, SetupCommand.self, CaptureCommand.self,
-            CheckCommand.self, PrecheckCommand.self, ScreenshotCommand.self,
-            BezelsCommand.self, RenderCommand.self,
-            SearchPreviewCommand.self, TemplatesCommand.self, ThemesCommand.self,
-            // App Store Connect: submit + binary upload + state
-            AuthCommand.self, SubmitCommand.self, MetadataCommand.self, TranslateCommand.self,
-            UploadBuildCommand.self,
-            StatusCommand.self, ReviewSubmissionsCommand.self, PricingCommand.self,
-            // App Store Connect: full API surface (added 2026-05)
-            TestFlightCommand.self, InAppPurchaseCommand.self, SubscriptionCommand.self,
-            ReviewsCommand.self, ReportsCommand.self, UsersCommand.self, DevPortalCommand.self,
-            PreviewsCommand.self, AppClipsCommand.self, CustomProductPagesCommand.self,
-            EventsCommand.self, ExperimentsCommand.self, EncryptionDeclCommand.self,
-            RoutingCoverageCommand.self,
-            // ASC API Wave 2 (added 2026-05): Game Center, Xcode Cloud, EU alt-distribution,
-            // Apple Pay + sandbox testers + resource limits + diagnostic sessions
-            GameCenterCommand.self, XcodeCloudCommand.self, AltDistributionCommand.self,
-            ApplePayCommand.self, SandboxCommand.self, ResourceLimitsCommand.self,
-            DiagnosticSessionsCommand.self,
-            // ASC API Wave 3 (added 2026-05): general-purpose webhooks, API-native
-            // build uploads, accessibility nutrition labels
-            WebhooksCommand.self, BuildUploadsCommand.self, AccessibilityDeclarationsCommand.self,
-            // ASC API Wave 4 (added 2026-05): Apple's 2025-2026 additions
-            BackgroundAssetsCommand.self, VersionReleaseControlCommand.self,
-            GameCenterActivitiesCommand.self,
-            BetaFeedbackCommand.self, BetaRecruitmentCommand.self,
-            BetaAppClipInvocationsCommand.self, IAPOfferCodesCommand.self,
-            SubscriptionExtrasCommand.self, ReviewExtrasCommand.self,
-            AscExtrasCommand.self,
-            // Community: submit your app to storescreens.app's Wall of Apps.
-            WallCommand.self,
+            ListCommand.self, InitCommand.self, SetupCommand.self,
+            PrepareCommand.self, CaptureCommand.self, CollectCommand.self,
+            CheckCommand.self, ScreenshotCommand.self, MigrateConfigCommand.self,
         ]
     )
 

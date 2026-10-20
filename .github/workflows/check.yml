@@ -1,0 +1,15 @@
+name: Check capture tool
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - run: swift test
+      - run: bash scripts/test-mcp.sh
+      - run: .build/debug/storescreens setup --print-template > /dev/null

@@ -78,7 +78,13 @@ send '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 resp=$(recv)
 if echo "$resp" | grep -q '"tools"'; then
   tool_count=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['result']['tools']))" 2>/dev/null || echo "?")
-  pass "tools/list → $tool_count tools registered"
+  echo "$resp" | python3 -c '
+import json, sys
+names = {tool["name"] for tool in json.load(sys.stdin)["result"]["tools"]}
+expected = {"capture", "get_capture_status", "get_capture_result", "check", "list_simulators", "list_screenshots", "get_screenshot", "take_screenshot", "read_config", "write_config"}
+assert names == expected, names
+'
+  pass "tools/list → $tool_count capture tools registered"
 else
   fail "tools/list → unexpected: $resp"
 fi

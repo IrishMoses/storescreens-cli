@@ -1,0 +1,5 @@
+StoreScreens 4 focuses on simulator setup, XCUITest orchestration, and raw screenshot collection. The CLI and MCP server share the capture implementation. Use Koubou for screenshot composition and rendering, and ASC CLI for App Store Connect management and uploads.
+
+This is a breaking release. Rendering, bezel import, translation, search previews, Wall of Apps, binary uploads, and App Store Connect commands have been removed. Run `storescreens migrate-config` before using an existing version 3 configuration. It preserves an exact private backup, keeps capture settings and per-screenshot appearance overrides, and leaves credentials in place. Port reviewed captions and layouts to Koubou separately.
+
+`storescreens prepare` boots and configures simulators, `storescreens collect` collects attachments from an existing `.xcresult`, and `result_bundle_dir` preserves test bundles for diagnosis or later collection. The generated XCUITest harness saves filesystem PNGs and XCTAttachments. See the README for the new command surface and migration instructions.

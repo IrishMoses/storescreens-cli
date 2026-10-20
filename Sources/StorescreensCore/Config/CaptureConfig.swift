@@ -48,9 +48,9 @@ package struct CaptureConfig: Codable {
     /// When nil, a temporary directory is used and cleaned up after each run.
     package var derivedDataPath: String?
 
-    /// Show the post-capture upload prompt for storescreens.app.
-    /// Default: false. Set to true to enable.
-    package var upload: Bool?
+    /// Keep .xcresult bundles here for later collection and failure diagnosis.
+    /// Each invocation receives a unique subdirectory. Nil uses temporary bundles.
+    package var resultBundleDir: String?
 
     /// Keep older preview pages on the index card grid under a
     /// "From older runs" heading. Older pages are the `preview_*.html`
@@ -70,23 +70,9 @@ package struct CaptureConfig: Codable {
     /// Merged with built-in defaults; user values win over built-in on key collisions.
     package var localeFlags: [String: String]?
 
-    /// Optional rendering pipeline config. When set with `enabled: true`,
-    /// captured screenshots are post-processed into captioned images with
-    /// background, logo, and device chrome.
-    package var render: RenderConfig?
-
-    /// Optional App Store Connect upload config. Consumed by
-    /// `storescreens submit` to push screenshots + metadata.
-    package var appStoreConnect: AppStoreConnectConfig?
-
-    /// Optional App Store search-preview config. When set with `enabled: true`,
-    /// the post-capture pipeline renders a faithful iPhone App Store search
-    /// result row (icon + name + subtitle + stars + 3 screenshots) wrapped in
-    /// an iPhone bezel + status bar, sourced from existing capture/metadata
-    /// inputs. Inspired by ezscreenshots' Search Preview tool - gives an
-    /// honest preview of how the app will look when surfaced in App Store
-    /// search before you ship.
-    package var searchPreview: SearchPreviewConfig?
+    /// Screenshot-specific appearance overrides, independent of rendering.
+    /// Requires an explicit screenshots list so captures are reproducible.
+    package var screenshotAppearances: [String: String]?
 
     package init(scheme: String, devices: [DeviceConfig], outputDir: String) {
         self.scheme = scheme
@@ -108,12 +94,10 @@ package struct CaptureConfig: Codable {
         case dismissSystemAlerts = "dismiss_system_alerts"
         case logLevel = "log_level"
         case derivedDataPath = "derived_data_path"
-        case upload
+        case resultBundleDir = "result_bundle_dir"
         case keepOldPreviews = "keep_old_previews"
         case localeFlags = "locale_flags"
-        case render
-        case appStoreConnect = "app_store_connect"
-        case searchPreview = "search_preview"
+        case screenshotAppearances = "screenshot_appearances"
     }
 }
 

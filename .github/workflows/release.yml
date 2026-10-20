@@ -1,0 +1,44 @@
+name: Release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify version
+        shell: bash
+        run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '\r\n' < VERSION)"
+      - run: swift test
+      - run: bash scripts/test-mcp.sh
+      - name: Package binaries and test harness
+        run: bash scripts/package-release.sh "$RUNNER_TEMP/release"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/release/"*.tar.gz --title "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
+      - name: Check out Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ciscoriordan/homebrew-tap
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Update Homebrew formula
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        shell: bash
+        run: |
+          python3 scripts/update-homebrew.py --tarball "$RUNNER_TEMP/release/storescreens-${GITHUB_REF_NAME}-macos.tar.gz" --tap homebrew-tap
+          cd homebrew-tap
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Formula/storescreens.rb
+          if ! git diff --cached --quiet; then
+            git commit -m "Update StoreScreens to ${GITHUB_REF_NAME}"
+            git push origin main
+          fi

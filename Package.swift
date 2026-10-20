@@ -47,7 +47,8 @@ let package = Package(
             dependencies: [
                 "StorescreensCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ]
+            ],
+            resources: [.copy("Resources/ScreenshotTests.swift.template")]
         ),
 
         // MCP server executable

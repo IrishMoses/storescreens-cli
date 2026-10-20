@@ -18,9 +18,11 @@ actor AsyncTaskStore {
 
     private var tasks: [String: TaskState] = [:]
 
-    func start(taskId: String) {
+    func start(taskId: String) -> Bool {
+        if tasks.values.contains(where: { if case .running = $0 { return true }; return false }) { return false }
         let now = Date()
         tasks[taskId] = .running(startedAt: now, lastEventAt: now, totalEventCount: 0, events: [], logDir: nil)
+        return true
     }
 
     func setLogDir(taskId: String, logDir: String) {
@@ -101,33 +103,7 @@ struct StorescreensMCP {
 
     // MARK: - Tool Definitions
 
-    /// All tools exposed by the MCP server: the built-in capture/render/preview
-    /// tools defined in this file plus every family of ASC API tools defined
-    /// alongside this file in `Tools/`. Each family's tools are appended in a
-    /// stable order; the dispatch code further down routes incoming calls to
-    /// the matching family handler.
     static let tools: [Tool] = baseTools
-        + TestFlightMCPTools.tools
-        + InAppPurchasesMCPTools.tools
-        + SubscriptionsMCPTools.tools
-        + CustomerReviewsMCPTools.tools
-        + ReportsMCPTools.tools
-        + UsersAndDevPortalMCPTools.tools
-        + MarketingMCPTools.tools
-        + GameCenterMCPTools.tools
-        + XcodeCloudMCPTools.tools
-        + AltDistributionMCPTools.tools
-        + ApplePayAndMiscMCPTools.tools
-        + WebhooksMCPTools.tools
-        + BuildUploadsMCPTools.tools
-        + AccessibilityDeclarationsMCPTools.tools
-        + BackgroundAssetsMCPTools.tools
-        + GameCenterActivitiesMCPTools.tools
-        + BetaFeedbackAndExtrasMCPTools.tools
-        + Wave4ExtrasMCPTools.tools
-        + ReviewSubmissionsMCPTools.tools
-        + PricingMCPTools.tools
-        + TranslateMCPTools.tools
 
     static let baseTools: [Tool] = [
         Tool(
@@ -212,34 +188,6 @@ struct StorescreensMCP {
             ])
         ),
         Tool(
-            name: "precheck",
-            description: """
-            Scan metadata/<locale>/*.txt for App Review guideline problems before submitting. \
-            Errors: references to other platforms (Android, Google Play), placeholder text, \
-            profanity, fields over Apple's character limits, malformed URLs. Warnings: \
-            "coming soon" promises, pre-release framing, disparaging Apple, wasteful keyword \
-            formatting, and empty files (which blank the live field). Needs no App Store \
-            Connect credentials. Distinct from `check`, which reads Swift source.
-            """,
-            inputSchema: .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "metadata_dir": .object([
-                        "type": .string("string"),
-                        "description": .string("Metadata directory (default: app_store_connect.metadata_dir, else ./metadata)"),
-                    ]),
-                    "config_path": .object([
-                        "type": .string("string"),
-                        "description": .string("Path to storescreens.yml (default: storescreens.yml). Optional - precheck works on a metadata directory alone."),
-                    ]),
-                    "check_urls": .object([
-                        "type": .string("boolean"),
-                        "description": .string("Also request every support / marketing / privacy URL to confirm it resolves. Makes network calls to third-party hosts; default false."),
-                    ]),
-                ]),
-            ])
-        ),
-        Tool(
             name: "list_simulators",
             description: """
             List available iOS simulators that can be used for App Store screenshot capture. \
@@ -319,68 +267,6 @@ struct StorescreensMCP {
             ])
         ),
         Tool(
-            name: "list_templates",
-            description: """
-            List built-in render templates (curated color + typography + background pattern presets). \
-            Apply one by calling set_template(template_id) or by passing --template to the render CLI. \
-            User-supplied fields in the config always win over template defaults.
-            """,
-            inputSchema: .object([
-                "type": .string("object"),
-                "properties": .object([:]),
-            ])
-        ),
-        Tool(
-            name: "suggest_themes",
-            description: """
-            Suggest render themes derived from the app's own captured screenshots: dominant background \
-            and most vivid accent color become ready-to-use `render:` values (background color or \
-            gradient, caption text color, chrome device_colorway) with legible contrast built in. \
-            Returns a JSON list ordered by recommendation strength; present the options to the user \
-            and always offer custom colors as an alternative.
-            """,
-            inputSchema: .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "paths": .object([
-                        "type": .string("array"),
-                        "items": .object(["type": .string("string")]),
-                        "description": .string("Screenshot paths to analyze. Default: the last capture's screenshots from manifest.json."),
-                    ]),
-                    "config_path": .object([
-                        "type": .string("string"),
-                        "description": .string("Path to config file (default: storescreens.yml); used to locate the capture output directory."),
-                    ]),
-                    "captured_dir": .object([
-                        "type": .string("string"),
-                        "description": .string("Override the capture output directory."),
-                    ]),
-                ]),
-            ])
-        ),
-        Tool(
-            name: "set_template",
-            description: """
-            Apply a built-in render template by writing `template: <id>` into storescreens.yml. \
-            Creates the `render:` block if missing. Does NOT remove user-supplied fields - those still \
-            win over the template defaults. Call list_templates first to see available IDs.
-            """,
-            inputSchema: .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "template_id": .object([
-                        "type": .string("string"),
-                        "description": .string("Template id from list_templates (e.g. 'sahara', 'midnight'). Pass empty string to clear."),
-                    ]),
-                    "config_path": .object([
-                        "type": .string("string"),
-                        "description": .string("Path to config file (default: storescreens.yml)"),
-                    ]),
-                ]),
-                "required": .array([.string("template_id")]),
-            ])
-        ),
-        Tool(
             name: "write_config",
             description: """
             Create or update storescreens.yml. Accepts a JSON object with any subset of config fields. \
@@ -406,7 +292,10 @@ struct StorescreensMCP {
                     "appearances": .object(["type": .string("array"), "description": .string("e.g. [\"light\", \"dark\"]")]),
                     "locales": .object(["type": .string("array"), "description": .string("e.g. [\"en-US\", \"ja\"]")]),
                     "derived_data_path": .object(["type": .string("string"), "description": .string("Persistent DerivedData directory for faster incremental builds. Reused across runs.")]),
-                    "upload": .object(["type": .string("boolean"), "description": .string("Enable post-capture upload prompt for storescreens.app. Default: false.")]),
+                    "result_bundle_dir": .object(["type": .string("string"), "description": .string("Keep original .xcresult bundles in unique per-run directories.")]),
+                    "screenshots": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
+                    "launch_arguments": .object(["type": .string("array"), "items": .object(["type": .string("string")])]),
+                    "screenshot_appearances": .object(["type": .string("object"), "additionalProperties": .object(["type": .string("string")])]),
                 ]),
             ])
         ),
@@ -416,95 +305,17 @@ struct StorescreensMCP {
 
     static func handle(_ params: CallTool.Parameters, server: Server) async -> CallTool.Result {
         do {
-            // ASC API families. Two routing strategies coexist here:
-            //   1. tools.contains(...) checks - most specific, used for any
-            //      family that shares a prefix with another (Wave 4 GC
-            //      Activities reuses `gc_*`; Wave 4 IAP Offer Codes reuses
-            //      `iap_*`; etc.). These must come BEFORE the prefix checks
-            //      so the more-specific family wins.
-            //   2. hasPrefix(...) - fallback for namespaces with a single
-            //      owner (`testflight_*`, `subs_*`, `reports_*`, …).
-            //   3. Result? - a couple of early Wave 1 families returned
-            //      nil for unknown names; left as-is.
-            if let r = try await CustomerReviewsMCPTools.handle(params) { return r }
-            if let r = try await UsersAndDevPortalMCPTools.handle(params) { return r }
-            // Wave 4 family-specific catalogs (most-specific first).
-            if GameCenterActivitiesMCPTools.tools.contains(where: { $0.name == params.name }) {
-                return try await GameCenterActivitiesMCPTools.handle(params)
-            }
-            if BackgroundAssetsMCPTools.tools.contains(where: { $0.name == params.name }) {
-                return try await BackgroundAssetsMCPTools.handle(params)
-            }
-            if BetaFeedbackAndExtrasMCPTools.tools.contains(where: { $0.name == params.name }) {
-                return try await BetaFeedbackAndExtrasMCPTools.handle(params)
-            }
-            if Wave4ExtrasMCPTools.tools.contains(where: { $0.name == params.name }) {
-                return try await Wave4ExtrasMCPTools.handle(params)
-            }
-            if ReviewSubmissionsMCPTools.tools.contains(where: { $0.name == params.name }) {
-                return try await ReviewSubmissionsMCPTools.handle(params)
-            }
-            // Marketing + Apple Pay grab-bag use tools.contains too.
-            if MarketingMCPTools.tools.contains(where: { $0.name == params.name }) {
-                return try await MarketingMCPTools.handle(params)
-            }
-            if ApplePayAndMiscMCPTools.tools.contains(where: { $0.name == params.name }) {
-                return try await ApplePayAndMiscMCPTools.handle(params)
-            }
-            // Prefix-based fallback routing for single-owner namespaces.
-            if params.name.hasPrefix("testflight_") {
-                return try await TestFlightMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("iap_") {
-                return try await InAppPurchasesMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("pricing_") {
-                return try await PricingMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("translate_") {
-                return try await TranslateMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("subs_") {
-                return try await SubscriptionsMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("reports_") {
-                return try await ReportsMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("gc_") {
-                return try await GameCenterMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("xcc_") {
-                return try await XcodeCloudMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("altdist_") {
-                return try await AltDistributionMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("webhooks_") {
-                return try await WebhooksMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("build_uploads_") {
-                return try await BuildUploadsMCPTools.handle(params)
-            }
-            if params.name.hasPrefix("accessibility_declarations_") {
-                return try await AccessibilityDeclarationsMCPTools.handle(params)
-            }
-
-            // Built-in capture / render / preview tools.
             switch params.name {
             case "capture":             return try await handleCapture(params)
             case "get_capture_status":  return await handleGetCaptureStatus(params)
             case "get_capture_result":  return try await handleGetCaptureResult(params)
             case "check":             return try await handleCheck(params)
-            case "precheck":          return try await handlePrecheck(params)
             case "list_simulators":   return try await handleListSimulators()
             case "list_screenshots":  return try handleListScreenshots(params)
             case "get_screenshot":    return try handleGetScreenshot(params)
             case "take_screenshot":   return try await handleTakeScreenshot(params)
             case "read_config":       return try handleReadConfig(params)
             case "write_config":      return try handleWriteConfig(params)
-            case "list_templates":    return try handleListTemplates()
-            case "suggest_themes":    return try handleSuggestThemes(params)
-            case "set_template":      return try handleSetTemplate(params)
             default:
                 return .init(content: [.text("Unknown tool: \(params.name)")], isError: true)
             }
@@ -516,23 +327,27 @@ struct StorescreensMCP {
     // MARK: - capture (non-blocking)
 
     static func handleCapture(_ params: CallTool.Parameters) async throws -> CallTool.Result {
-        let configPath = params.arguments?["config_path"]?.stringValue ?? "storescreens.yml"
-        if let dir = params.arguments?["directory"]?.stringValue {
-            FileManager.default.changeCurrentDirectoryPath(dir)
-        }
-
-        var captureConfig = try ConfigLoader().load(from: configPath)
-        if let ddp = params.arguments?["derived_data_path"]?.stringValue {
-            captureConfig.derivedDataPath = (ddp as NSString).expandingTildeInPath
-        }
-        guard captureConfig.project != nil || captureConfig.workspace != nil else {
-            return .init(content: [.text("No project or workspace in \(configPath). Run write_config or check storescreens.yml.")], isError: true)
-        }
-
         let taskId = String(UUID().uuidString.prefix(8).lowercased())
-        await AsyncTaskStore.shared.start(taskId: taskId)
+        guard await AsyncTaskStore.shared.start(taskId: taskId) else {
+            return .init(content: [.text("Another capture is already running. Poll get_capture_status until it finishes.")], isError: true)
+        }
+        let configPath = params.arguments?["config_path"]?.stringValue ?? "storescreens.yml"
+        var captureConfig: CaptureConfig
+        do {
+            if let dir = params.arguments?["directory"]?.stringValue {
+                guard FileManager.default.changeCurrentDirectoryPath(dir) else { throw CLIError.configNotFound(path: dir) }
+            }
+            captureConfig = try ConfigLoader().load(from: configPath)
+            if let ddp = params.arguments?["derived_data_path"]?.stringValue {
+                captureConfig.derivedDataPath = (ddp as NSString).expandingTildeInPath
+            }
+            guard captureConfig.project != nil || captureConfig.workspace != nil else { throw CLIError.noProjectOrWorkspace }
+        } catch {
+            await AsyncTaskStore.shared.fail(taskId: taskId, error: error.localizedDescription)
+            throw error
+        }
 
-        // Run capture in background - returns taskId immediately so Claude can poll.
+        // Run capture in background - returns taskId immediately so clients can poll.
         Task {
             actor EventCollector {
                 private(set) var events: [String] = []
@@ -577,29 +392,6 @@ struct StorescreensMCP {
                     }
                 }
 
-                // Post-capture render + preview regeneration.
-                // Shared with the CLI entry point so MCP users get the
-                // same framed PNGs + raw/framed preview toggle. Render
-                // progress lines flow through the logger closure into
-                // AsyncTaskStore so callers polling `get_capture_status`
-                // see them alongside capture events. Failures inside
-                // the runner are already non-fatal - nothing throws here.
-                let baseDirectory = URL(fileURLWithPath: configPath)
-                    .deletingLastPathComponent()
-                    .standardized
-                await PostCaptureRunner().runIfEnabled(
-                    captureConfig: captureConfig,
-                    manifest: result.manifest,
-                    capturedRoot: result.outputDir,
-                    baseDirectory: baseDirectory,
-                    logger: { msg in
-                        Task {
-                            await collector.append(msg)
-                            await AsyncTaskStore.shared.appendEvent(taskId: taskId, line: msg)
-                        }
-                    }
-                )
-
                 let events = await collector.events
 
                 // Store full result for on-demand retrieval
@@ -631,14 +423,6 @@ struct StorescreensMCP {
                 """
                 await AsyncTaskStore.shared.complete(taskId: taskId, captureId: captureId, summary: summary, isError: didFail)
 
-                // Open preview in default browser on success
-                if !didFail {
-                    let previewPath = result.outputDir.appendingPathComponent("preview.html").path
-                    let process = Process()
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                    process.arguments = [previewPath]
-                    try? process.run()
-                }
             } catch {
                 await AsyncTaskStore.shared.fail(taskId: taskId, error: error.localizedDescription)
             }
@@ -945,67 +729,6 @@ struct StorescreensMCP {
         return .init(content: [.text(summary)], isError: scanResult.hasErrors)
     }
 
-    // MARK: - precheck
-
-    static func handlePrecheck(_ params: CallTool.Parameters) async throws -> CallTool.Result {
-        let configPath = params.arguments?["config_path"]?.stringValue ?? "storescreens.yml"
-        let checkURLs = params.arguments?["check_urls"]?.boolValue ?? false
-
-        // The YAML is optional: precheck is useful on a metadata directory
-        // alone, so a missing config falls back to ./metadata rather than
-        // erroring out.
-        let captureConfig = try? ConfigLoader().load(from: configPath)
-        let baseDir = URL(fileURLWithPath: configPath).deletingLastPathComponent().standardized
-        let root: URL = {
-            if let override = params.arguments?["metadata_dir"]?.stringValue, !override.isEmpty {
-                return URL(fileURLWithPath: override)
-            }
-            if let configured = captureConfig?.appStoreConnect?.metadataDir {
-                return URL(fileURLWithPath: configured, relativeTo: baseDir).standardized
-            }
-            return baseDir.appendingPathComponent("metadata")
-        }()
-
-        guard FileManager.default.fileExists(atPath: root.path) else {
-            return .init(
-                content: [.text("No metadata directory at \(root.path). Run `storescreens metadata init` or pass metadata_dir.")],
-                isError: true
-            )
-        }
-
-        let scanner = MetadataPrecheck()
-        let offline = scanner.scan(dir: root)
-        var findings = offline.findings
-        if checkURLs {
-            findings.append(contentsOf: await scanner.checkURLs(dir: root))
-        }
-
-        struct FindingOutput: Encodable {
-            let severity: String
-            let rule: String
-            let locale: String
-            let file: String
-            let line: Int?
-            let message: String
-            let excerpt: String?
-        }
-        let output = findings.map {
-            FindingOutput(
-                severity: $0.severity.rawValue, rule: $0.rule,
-                locale: $0.locale, file: $0.file, line: $0.line,
-                message: $0.message, excerpt: $0.excerpt
-            )
-        }
-        let errorCount = findings.filter { $0.severity == .error }.count
-        let warningCount = findings.count - errorCount
-
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let json = String(data: try encoder.encode(output), encoding: .utf8) ?? "[]"
-        let summary = "\(offline.localesScanned) locale(s) scanned: \(errorCount) error(s), \(warningCount) warning(s)\n\n\(json)"
-        return .init(content: [.text(summary)], isError: errorCount > 0)
-    }
-
     // MARK: - list_simulators
 
     static func handleListSimulators() async throws -> CallTool.Result {
@@ -1146,104 +869,6 @@ struct StorescreensMCP {
         return .init(content: [.text(json)], isError: false)
     }
 
-    // MARK: - list_templates
-
-    static func handleListTemplates() throws -> CallTool.Result {
-        struct Out: Encodable {
-            let id: String
-            let name: String
-            let category: String
-            let description: String
-        }
-        let templates = RenderTemplate.builtIn.map {
-            Out(id: $0.id, name: $0.name, category: $0.category, description: $0.description)
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let json = String(data: try encoder.encode(templates), encoding: .utf8) ?? "[]"
-        return .init(content: [.text("""
-        \(templates.count) built-in templates:
-
-        \(json)
-
-        Apply one with set_template(template_id: "<id>") or `storescreens render --template <id>`.
-        """)], isError: false)
-    }
-
-    // MARK: - suggest_themes
-
-    static func handleSuggestThemes(_ params: CallTool.Parameters) throws -> CallTool.Result {
-        let urls: [URL]
-        if let paths = params.arguments?["paths"]?.arrayValue?.compactMap(\.stringValue), !paths.isEmpty {
-            urls = paths.map { URL(fileURLWithPath: $0) }
-        } else {
-            let capturedRoot: URL
-            if let dir = params.arguments?["captured_dir"]?.stringValue {
-                capturedRoot = URL(fileURLWithPath: dir)
-            } else {
-                let configPath = params.arguments?["config_path"]?.stringValue ?? "storescreens.yml"
-                let captureConfig = try ConfigLoader().load(from: configPath)
-                capturedRoot = URL(fileURLWithPath: captureConfig.outputDir)
-            }
-            guard FileManager.default.fileExists(atPath: capturedRoot.appendingPathComponent("manifest.json").path) else {
-                return .init(content: [.text("No manifest.json in \(capturedRoot.path). Run a capture first or pass explicit screenshot paths.")], isError: true)
-            }
-            urls = try ThemeSuggester.capturedScreenshotURLs(capturedRoot: capturedRoot)
-        }
-        guard !urls.isEmpty else {
-            return .init(content: [.text("No screenshots to analyze.")], isError: true)
-        }
-
-        let themes = try ThemeSuggester.suggest(from: urls)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let json = String(data: try encoder.encode(themes), encoding: .utf8) ?? "[]"
-        return .init(content: [.text("""
-        \(themes.count) theme suggestion(s) from \(urls.count) screenshot(s), ordered by recommendation strength.
-        Map each entry onto the render config: background -> render.background.color (one hex = solid, \
-        two = vertical gradient), text_color -> render.caption.title.color, device_colorway -> \
-        render.chrome.device_colorway. Make sure render.chrome.style is set (bezel or device) - \
-        device_colorway has no effect without a drawn frame. Present the options to the user and \
-        offer custom colors too.
-
-        \(json)
-        """)], isError: false)
-    }
-
-    // MARK: - set_template
-
-    static func handleSetTemplate(_ params: CallTool.Parameters) throws -> CallTool.Result {
-        guard let templateId = params.arguments?["template_id"]?.stringValue else {
-            return .init(content: [.text("Missing required parameter: template_id")], isError: true)
-        }
-        let configPath = params.arguments?["config_path"]?.stringValue ?? "storescreens.yml"
-
-        // Reject unknown template ids up-front so the user doesn't write a
-        // value that the render pipeline will then warn about. Empty string
-        // is the documented way to clear the template, so let that through.
-        if !templateId.isEmpty, RenderTemplate.find(templateId) == nil {
-            let known = RenderTemplate.builtIn.map(\.id).joined(separator: ", ")
-            return .init(content: [.text("Unknown template '\(templateId)'. Known: \(known).")], isError: true)
-        }
-
-        guard FileManager.default.fileExists(atPath: configPath) else {
-            return .init(content: [.text("No config at \(configPath). Run `storescreens init` or pass config_path.")], isError: true)
-        }
-
-        var config = try ConfigLoader().load(from: configPath)
-        var render = config.render ?? RenderConfig(enabled: true)
-        if render.enabled == nil { render.enabled = true }
-        render.template = templateId.isEmpty ? nil : templateId
-        config.render = render
-
-        try ConfigLoader().write(config, to: configPath)
-
-        let msg = templateId.isEmpty
-            ? "Cleared template from \(configPath)."
-            : "Applied template '\(templateId)' to \(configPath). Run `storescreens render` to re-render with the new defaults."
-        return .init(content: [.text(msg)], isError: false)
-    }
-
     // MARK: - write_config
 
     static func handleWriteConfig(_ params: CallTool.Parameters) throws -> CallTool.Result {
@@ -1268,7 +893,11 @@ struct StorescreensMCP {
         if let v = args["test_target"]?.stringValue  { config.testTarget = v }
         if let v = args["test_class"]?.stringValue   { config.testClass = v }
         if let v = args["derived_data_path"]?.stringValue { config.derivedDataPath = (v as NSString).expandingTildeInPath }
-        if let v = args["upload"]?.boolValue             { config.upload = v }
+
+        if let value = args["result_bundle_dir"]?.stringValue { config.resultBundleDir = value }
+        if let values = args["screenshots"]?.arrayValue { config.screenshots = values.compactMap { $0.stringValue } }
+        if let values = args["launch_arguments"]?.arrayValue { config.launchArguments = values.compactMap { $0.stringValue } }
+        if let values = args["screenshot_appearances"]?.objectValue { config.screenshotAppearances = values.compactMapValues { $0.stringValue } }
 
         if let devArray = args["devices"]?.arrayValue {
             // Pass every DeviceConfig field through. Rebuilding entries from

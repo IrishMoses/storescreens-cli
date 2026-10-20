@@ -17,7 +17,14 @@ struct SetupCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Skip interactive prompts and use defaults.")
     var nonInteractive: Bool = false
 
+    @Flag(name: .long, help: "Print the editable XCUITest template without changing a project.")
+    var printTemplate: Bool = false
+
     func run() async throws {
+        if printTemplate {
+            print(try generateTestFile(screenNames: ["Home", "Search"]))
+            return
+        }
         let logger = Logger()
         let detector = ProjectDetector()
 
@@ -134,7 +141,7 @@ struct SetupCommand: AsyncParsableCommand {
 
         // 6. Generate ScreenshotTests.swift
         logger.header("Generating Test File")
-        let testFileContent = generateTestFile(screenNames: screenNames)
+        let testFileContent = try generateTestFile(screenNames: screenNames)
         let fm = FileManager.default
 
         try fm.createDirectory(atPath: testTargetDir, withIntermediateDirectories: true)
@@ -193,7 +200,7 @@ struct SetupCommand: AsyncParsableCommand {
             // mtimes in display order (first in list = newest mtime).
             // Skip if the user already wrote one.
             if !contents.contains("\nscreenshots:") && !contents.hasPrefix("screenshots:") {
-                var section = "\n# Display order for App Store Connect. Drives render order, HTML\n"
+                var section = "\n# Screenshot collection order. Drives HTML\n"
                 section += "# preview gallery order, and the mtime stamp on output PNGs so\n"
                 section += "# `ls -t` / Finder \"Date Created\" sort matches this list.\n"
                 section += "screenshots:\n"
@@ -275,124 +282,19 @@ struct SetupCommand: AsyncParsableCommand {
         isatty(STDIN_FILENO) != 0
     }
 
-    private func generateTestFile(screenNames: [String]) -> String {
-        var swift = """
-        import XCTest
-
-        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        // IMPORTANT: Accessibility Identifiers
-        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        //
-        // This test relies on .accessibilityIdentifier() to find UI elements reliably.
-        // Add identifiers to your SwiftUI views - especially:
-        //
-        //   ✓ Buttons, toolbar items, and navigation elements
-        //   ✓ Loading indicators (ProgressView) and content containers
-        //   ✓ Text that appears in multiple places (e.g. your app name in both
-        //     the launch screen AND the main toolbar - using text matching will
-        //     cause false positives)
-        //   ✓ Search fields, text fields, toggles, pickers
-        //   ✓ Key content areas that indicate a screen has finished loading
-        //
-        // Example (SwiftUI):
-        //   Button("Save") { ... }
-        //     .accessibilityIdentifier("saveButton")
-        //
-        //   ProgressView()
-        //     .accessibilityIdentifier("loadingIndicator")
-        //
-        //   ScrollView { ... }
-        //     .accessibilityIdentifier("mainContent")
-        //
-        // Why: Matching by text label (e.g. app.staticTexts["My App"]) is fragile -
-        // the same text can appear in multiple views (launch screen, toolbar, about
-        // page). Accessibility identifiers are unique, stable, and testable.
-        // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        final class ScreenshotTests: XCTestCase {
-
-            private var app: XCUIApplication!
-
-            override func setUpWithError() throws {
-                continueAfterFailure = false
-                app = XCUIApplication()
-                app.launchArguments = ["--uitesting"]
-                app.launch()
-
-                // Dismiss any system alerts (e.g. App Store review prompts, notification permissions)
-                addUIInterruptionMonitor(withDescription: "System Alert") { alert in
-                    let dismissLabels = ["Not Now", "Cancel", "No Thanks", "Later", "Don't Allow", "OK"]
-                    for label in dismissLabels {
-                        let button = alert.buttons[label]
-                        if button.exists {
-                            button.tap()
-                            return true
-                        }
-                    }
-                    return false
-                }
-
-                // TODO: Wait for your app's main content to load.
-                // Use a unique accessibility identifier - NOT text that might appear on
-                // a launch screen or splash screen. For example:
-                //
-                //   XCTAssertTrue(
-                //     app.buttons["mainMenuButton"].waitForExistence(timeout: 15),
-                //     "App did not finish loading"
-                //   )
-            }
-
-            // MARK: - Helpers
-
-            private func takeScreenshot(named name: String) {
-                let screenshot = XCUIScreen.main.screenshot()
-                let attachment = XCTAttachment(screenshot: screenshot)
-                attachment.name = name
-                attachment.lifetime = .keepAlways
-                add(attachment)
-            }
-
-            /// Wait for any element with the given accessibility identifier to appear.
-            /// Use this instead of sleep() to wait for content to load.
-            private func waitForElement(id: String, timeout: TimeInterval = 10, description: String? = nil) {
-                let predicate = NSPredicate(format: "identifier == %@", id)
-                let query = app.descendants(matching: .any).matching(predicate).firstMatch
-                let desc = description ?? "Element '\\(id)'"
-                XCTAssertTrue(
-                    query.waitForExistence(timeout: timeout),
-                    "\\(desc) not found within \\(Int(timeout))s"
-                )
-            }
-
-            // MARK: - App Store Screenshot Flow
-
-            func testGenerateAppStoreScreenshots() throws {
-
-        """
-
-        for (index, name) in screenNames.enumerated() {
-            let attachmentName = name
-                .replacingOccurrences(of: " ", with: "")
-
-            if index > 0 {
-                swift += "        // TODO: Navigate to \(name)\n"
-                swift += "        // waitForElement(id: \"\(attachmentName.lowercased())Content\")\n"
-            }
-            // Names are plain identifiers (Home, Search, Detail). Display order
-            // is driven by the `screenshots:` list in storescreens.yml, which
-            // the capture pipeline uses to stamp mtimes on the output PNGs.
-            swift += "        takeScreenshot(named: \"\(attachmentName)\")\n"
-            if index < screenNames.count - 1 {
-                swift += "\n"
-            }
+    func generateTestFile(screenNames: [String]) throws -> String {
+        guard let url = Bundle.module.url(forResource: "ScreenshotTests.swift", withExtension: "template") else {
+            throw CLIError.configInvalid(reason: "Screenshot test template is missing from the installation")
         }
-
-        swift += """
-            }
-        }
-
-        """
-
-        return swift
+        let template = try String(contentsOf: url, encoding: .utf8)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        let calls = try screenNames.enumerated().map { index, name -> String in
+            let identifier = name.replacingOccurrences(of: " ", with: "")
+            let literal = String(data: try encoder.encode(identifier), encoding: .utf8)!
+            let navigation = index == 0 ? "" : "        // Navigate to the next screen before capturing.\n"
+            return navigation + "        takeScreenshot(named: \(literal))\n"
+        }.joined()
+        return template.replacingOccurrences(of: "{{SCREENSHOT_CALLS}}", with: calls)
     }
 }

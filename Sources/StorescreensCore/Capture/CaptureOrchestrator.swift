@@ -58,8 +58,40 @@ package struct CaptureOrchestrator: Sendable {
         retries: Int = 1,
         keepAlive: Bool = false,
         only: String? = nil,
+        scope: CaptureScope = .full,
         eventHandler: @escaping CaptureEventHandler
     ) async throws -> CaptureResult {
+        var config = config
+        try ConfigLoader.validate(config)
+        guard config.project != nil || config.workspace != nil else { throw CLIError.noProjectOrWorkspace }
+        guard !config.devices.isEmpty else { throw CLIError.noDevicesConfigured }
+        guard retries >= 0 else { throw CLIError.configInvalid(reason: "retries must be nonnegative") }
+        if mode == .simple, !(config.screenshotAppearances?.isEmpty ?? true) {
+            throw CLIError.configInvalid(reason: "screenshot_appearances requires XCUITest capture")
+        }
+        let lease = try CaptureLease.acquire()
+        defer { Self.cleanScreenshotCache(); lease.release() }
+        Self.cleanScreenshotCache()
+        if let root = config.resultBundleDir {
+            let path = URL(fileURLWithPath: (root as NSString).expandingTildeInPath).appendingPathComponent(UUID().uuidString).path
+            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            config.resultBundleDir = path
+            await eventHandler(.phase("Result bundles: \(path)"))
+        }
+        if config.preflight != false {
+            let context = PreflightScanner.DeviceContext(
+                hasIPad: config.devices.contains { $0.simulator.lowercased().contains("ipad") },
+                hasIPhone: config.devices.contains { !$0.isMacOS && $0.simulator.lowercased().contains("iphone") },
+                hasMultipleLocales: (config.locales?.count ?? 0) > 1
+            )
+            let projectPath = config.project ?? config.workspace ?? "."
+            let directory = (projectPath as NSString).deletingLastPathComponent
+            let findings = PreflightScanner().scan(directory: directory.isEmpty ? "." : directory, deviceContext: context)
+            for finding in findings.findings {
+                await eventHandler(.preflightFinding(rule: "source-check", device: nil, message: "\(finding.filePath):\(finding.lineNumber): \(finding.message)"))
+            }
+            if findings.hasErrors { throw CLIError.preflightFailed(errorCount: findings.errors.count, warningCount: findings.warnings.count) }
+        }
         // Write screenshot filter file if --only was passed, or clean it up if not
         let filterFile = Self.screenshotFilterFile
         if let only {
@@ -79,6 +111,7 @@ package struct CaptureOrchestrator: Sendable {
                 xcresult: xcresult,
                 noParallel: noParallel,
                 retries: retries,
+                scope: scope,
                 eventHandler: eventHandler
             )
         case .simple:
@@ -86,6 +119,7 @@ package struct CaptureOrchestrator: Sendable {
                 config: config,
                 keepAlive: keepAlive,
                 retries: retries,
+                scope: scope,
                 eventHandler: eventHandler
             )
         }
@@ -93,8 +127,9 @@ package struct CaptureOrchestrator: Sendable {
 
     // MARK: - Static helpers
 
-    package static let screenshotsCacheDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent(".storescreens-cache")
+    package static var screenshotsCacheDir: URL {
+        URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".storescreens-cache")
+    }
 
     package static let breadcrumbFile = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".storescreens-cache-dir")
@@ -161,6 +196,7 @@ package struct CaptureOrchestrator: Sendable {
         xcresult: Bool,
         noParallel: Bool,
         retries: Int,
+        scope: CaptureScope,
         eventHandler: @escaping CaptureEventHandler
     ) async throws -> CaptureResult {
         let simulatorManager = SimulatorManager()
@@ -263,18 +299,6 @@ package struct CaptureOrchestrator: Sendable {
             try? await simulatorManager.deleteClonesOf(name: device.simulatorName, keepUDID: device.udid)
         }
 
-        // Then sweep the rest of the XCTestDevices set. Every idle device in
-        // there is a leftover clone from some earlier `xcodebuild test` - any
-        // project's, not just a storescreens capture - and once a couple of
-        // dozen accumulate, CoreSimulator stops creating new ones and every run
-        // on the machine fails to launch its test runner.
-        if resolvedDevices.contains(where: { !$0.isMacOS }) {
-            let swept = await simulatorManager.sweepTestClones(sparing: Set(resolvedDevices.map(\.udid)))
-            if swept > 0 {
-                await eventHandler(.phase("Removed \(swept) leftover xcodebuild simulator clone\(swept == 1 ? "" : "s")"))
-            }
-        }
-
         let outputDir = (config.outputDir as NSString).expandingTildeInPath
         let historyManager = RunHistoryManager(
             outputDir: outputDir,
@@ -299,14 +323,9 @@ package struct CaptureOrchestrator: Sendable {
             : config.locales!.map { $0 as String? }
 
         // Determine appearances to iterate (default: both light and dark)
-        let configuredAppearances = config.appearances ?? ["light", "dark"]
+        let configuredAppearances = CaptureSelection.appearances(config: config)
 
         var manifestDevices: [CaptureManifest.DeviceCapture] = []
-
-        // Clear leftovers from any prior (possibly failed) run before we write
-        // a fresh cache. Without this, stale device subdirs, pipes, and old
-        // PNGs accumulate over time.
-        Self.cleanScreenshotCache()
 
         // Ensure cache dir exists (for pipes and screenshots)
         try FileManager.default.createDirectory(at: Self.screenshotsCacheDir, withIntermediateDirectories: true)
@@ -325,6 +344,8 @@ package struct CaptureOrchestrator: Sendable {
                 if noParallel {
                     // Sequential: one device at a time, outer appearance loop
                     for currentAppearance in configuredAppearances {
+                        let selected = CaptureSelection.screenshots(config: config, appearance: currentAppearance)
+                        if selected?.isEmpty == true { continue }
                         await eventHandler(.phase("Appearance: \(currentAppearance)"))
 
                         for (index, device) in resolvedDevices.enumerated() {
@@ -339,7 +360,7 @@ package struct CaptureOrchestrator: Sendable {
                                 tempDir: tempDir, config: config, derivedDataPath: derivedData,
                                 testTarget: config.testTarget, testClass: config.testClass,
                                 outputOrganizer: outputOrganizer, outputDir: effectiveOutputDir,
-                                screenshotFilter: config.screenshots,
+                                screenshotFilter: selected,
                                 logDir: logDir,
                                 xcresult: xcresult,
                                 retries: retries,
@@ -373,6 +394,8 @@ package struct CaptureOrchestrator: Sendable {
                                 }
                                 var deviceCaptures: [CaptureManifest.DeviceCapture] = []
                                 for currentAppearance in configuredAppearances {
+                                    let selected = CaptureSelection.screenshots(config: config, appearance: currentAppearance)
+                                    if selected?.isEmpty == true { continue }
                                     let captures = try await self.runDeviceAppearance(
                                         device: device,
                                         logLine: logLine,
@@ -381,7 +404,7 @@ package struct CaptureOrchestrator: Sendable {
                                         tempDir: tempDir, config: config, derivedDataPath: deviceDerivedData,
                                         testTarget: config.testTarget, testClass: config.testClass,
                                         outputOrganizer: outputOrganizer, outputDir: effectiveOutputDir,
-                                        screenshotFilter: config.screenshots,
+                                        screenshotFilter: selected,
                                         logDir: logDir,
                                         xcresult: xcresult,
                                         retries: retries,
@@ -418,7 +441,7 @@ package struct CaptureOrchestrator: Sendable {
             let displayName = builtAppPath.flatMap { detectDisplayName(appPath: $0) }
 
             // Write manifest
-            let manifest = CaptureManifest(
+            let captured = CaptureManifest(
                 version: 2,
                 generatedAt: Date(),
                 generatedBy: "storescreens-cli \(storescreensVersion)",
@@ -427,6 +450,9 @@ package struct CaptureOrchestrator: Sendable {
                 scheme: config.scheme,
                 devices: manifestDevices
             )
+            let existing = destination.isStaging && !scope.isFull
+                ? try CaptureManifest.load(fromOutputDir: outputDir) : nil
+            let manifest = captured.merged(over: existing, scope: scope)
             try outputOrganizer.writeManifest(manifest, to: effectiveOutputDir)
             outputOrganizer.stampMtimes(
                 manifest: manifest,
@@ -447,20 +473,10 @@ package struct CaptureOrchestrator: Sendable {
 
             try historyManager.finalizeCapture(destination)
 
-            // Clean up cache and breadcrumb
-            Self.cleanScreenshotCache()
-
-            let finalManifest = CaptureManifest(
-                version: 2,
-                generatedAt: Date(),
-                generatedBy: "storescreens-cli \(storescreensVersion)",
-                appName: config.scheme,
-                displayName: displayName,
-                scheme: config.scheme,
-                devices: manifestDevices
-            )
-            let outputDirURL = URL(fileURLWithPath: (config.outputDir as NSString).expandingTildeInPath)
-            return CaptureResult(manifest: finalManifest, outputDir: outputDirURL)
+            let outputDirURL = destination.isStaging
+                ? URL(fileURLWithPath: outputDir)
+                : URL(fileURLWithPath: effectiveOutputDir)
+            return CaptureResult(manifest: manifest, outputDir: outputDirURL)
         } catch {
             historyManager.handleFailure(destination)
             throw error
@@ -500,6 +516,14 @@ package struct CaptureOrchestrator: Sendable {
         // `writeCurrentLocaleHint` for the rationale - the AUT picks up
         // locale via launch arguments, not simulator GlobalPreferences.
         Self.writeCurrentLocaleHint(locale)
+        var harnessSettings: [String: Any] = [
+            "launch_arguments": config.launchArguments ?? ["--uitesting"],
+            "dismiss_system_alerts": config.dismissSystemAlerts ?? true,
+            "mac_device_name": config.devices.first(where: { $0.isMacOS })?.simulator ?? "Mac 2560x1600",
+        ]
+        if let locale { harnessSettings["locale"] = locale }
+        let harnessData = try JSONSerialization.data(withJSONObject: harnessSettings, options: [.sortedKeys])
+        try harnessData.write(to: Self.homeFilterCacheDir.appendingPathComponent("harness.json"), options: .atomic)
 
         // macOS tests run natively - skip all simulator setup
         if !device.isMacOS {
@@ -560,7 +584,7 @@ package struct CaptureOrchestrator: Sendable {
         }
 
         let localeSuffix = locale.map { "-\($0)" } ?? ""
-        let resultPath = tempDir
+        let resultPath = (config.resultBundleDir.map { URL(fileURLWithPath: $0) } ?? tempDir)
             .appendingPathComponent("\(device.udid)\(localeSuffix)-\(appearance).xcresult").path
 
         let liveHandler: (@Sendable (String) -> Void)?
@@ -865,6 +889,7 @@ package struct CaptureOrchestrator: Sendable {
         config: CaptureConfig,
         keepAlive: Bool,
         retries: Int,
+        scope: CaptureScope,
         eventHandler: @escaping CaptureEventHandler
     ) async throws -> CaptureResult {
         let simulatorManager = SimulatorManager()
@@ -940,7 +965,7 @@ package struct CaptureOrchestrator: Sendable {
             ? [nil]
             : config.locales!.map { $0 as String? }
 
-        let configuredAppearances = config.appearances ?? ["light", "dark"]
+        let configuredAppearances = CaptureSelection.appearances(config: config)
 
         var manifestDevices: [CaptureManifest.DeviceCapture] = []
 
@@ -1027,7 +1052,7 @@ package struct CaptureOrchestrator: Sendable {
 
             let simpleDisplayName = detectDisplayName(appPath: appPath)
 
-            let manifest = CaptureManifest(
+            let captured = CaptureManifest(
                 version: 2,
                 generatedAt: Date(),
                 generatedBy: "storescreens-cli \(storescreensVersion)",
@@ -1036,6 +1061,9 @@ package struct CaptureOrchestrator: Sendable {
                 scheme: config.scheme,
                 devices: manifestDevices
             )
+            let existing = destination.isStaging && !scope.isFull
+                ? try CaptureManifest.load(fromOutputDir: outputDir) : nil
+            let manifest = captured.merged(over: existing, scope: scope)
             try outputOrganizer.writeManifest(manifest, to: effectiveOutputDir)
             outputOrganizer.stampMtimes(
                 manifest: manifest,
@@ -1057,12 +1085,11 @@ package struct CaptureOrchestrator: Sendable {
             throw error
         }
 
-        Self.cleanScreenshotCache()
 
         let totalScreenshots = manifestDevices.reduce(0) { $0 + $1.screenshots.count }
         await eventHandler(.phase("Done! \(totalScreenshots) screenshots saved to \(config.outputDir)"))
 
-        let finalManifest = CaptureManifest(
+        let finalManifest = try CaptureManifest.load(fromOutputDir: destination.isStaging ? outputDir : effectiveOutputDir) ?? CaptureManifest(
             version: 2,
             generatedAt: Date(),
             generatedBy: "storescreens-cli \(storescreensVersion)",
@@ -1071,7 +1098,7 @@ package struct CaptureOrchestrator: Sendable {
             scheme: config.scheme,
             devices: manifestDevices
         )
-        let outputDirURL = URL(fileURLWithPath: (config.outputDir as NSString).expandingTildeInPath)
+        let outputDirURL = URL(fileURLWithPath: destination.isStaging ? outputDir : effectiveOutputDir)
         return CaptureResult(manifest: finalManifest, outputDir: outputDirURL)
     }
 

@@ -27,7 +27,7 @@ package struct HTMLPreviewGenerator {
     ///
     /// When `screenshotOrder` is non-nil, each device's screenshots are
     /// reordered in the gallery to match the list (same semantics as
-    /// `RenderPipeline.render`'s `screenshotOrder`). Without this, the
+    /// the capture configuration). Without this, the
     /// manifest-on-disk order (alphabetical by filename) wins and the
     /// gallery disagrees with the render's slide sequence - the user
     /// sees their hero slide in some other spot.
@@ -73,12 +73,12 @@ package struct HTMLPreviewGenerator {
 
         for key in sortedKeys {
             // Apply the screenshots-list order here so the gallery's
-            // slide sequence matches render's. RenderPipeline.applyOrder
+            // slide sequence matches render's. ScreenshotOrdering.apply
             // is the single source of truth for both; the two places
             // where slide order matters (render loop + preview gallery)
             // run through the same helper so they can't drift.
             let captures = pages[key]!.map { dev -> CaptureManifest.DeviceCapture in
-                let ordered = RenderPipeline.applyOrder(dev.screenshots, order: screenshotOrder)
+                let ordered = ScreenshotOrdering.apply(dev.screenshots, order: screenshotOrder)
                 return CaptureManifest.DeviceCapture(
                     deviceType: dev.deviceType,
                     simulatorName: dev.simulatorName,
