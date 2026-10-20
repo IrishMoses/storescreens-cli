@@ -1,5 +1,11 @@
 ![StoreScreens](assets/banner.png)
 
+> **Retired October 20, 2026.** StoreScreens is no longer maintained. Use [Koubou](https://github.com/bitomule/Koubou) for screenshot rendering and [App Store Connect CLI](https://asccli.sh/) for uploads and App Store Connect operations.
+
+The source and existing releases are preserved for reference. The documentation below describes the retired software; no further fixes or releases are planned.
+
+---
+
 # StoreScreens
 
 Every App Store Connect API call. Granular, agentic screenshot rendering.
