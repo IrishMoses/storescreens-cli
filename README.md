@@ -6,25 +6,42 @@
 
 StoreScreens sets up simulators, runs your XCUITest screenshot flows, and collects authentic raw captures across devices, locales, and appearances. It provides a Swift CLI and a capture-only MCP server.
 
-StoreScreens is active again with a narrower scope in version 4. We recommend [Koubou](https://github.com/bitomule/Koubou) for screenshot composition, device frames, captions, localization, and rendering, and [ASC CLI](https://asccli.sh/) for App Store Connect and Apple Ads management, including uploads. StoreScreens does not implement those features or manage their credentials.
+Version 4 focuses on capture. Use the screenshot renderer and App Store Connect command-line tool you prefer. We recommend [Koubou](https://github.com/bitomule/Koubou) for screenshot composition, device frames, captions, localization, and rendering, and [ASC CLI](https://asccli.sh/) for App Store Connect and Apple Ads management, including uploads. These are optional downstream tools; StoreScreens does not implement those features or manage their credentials.
 
 ## Install
 
-Requires macOS 14 or later, Xcode, and the simulator runtimes your application needs. On a Mac using mise:
+Prebuilt binaries require an Apple silicon Mac with macOS 14 or later. Capture requires Xcode and the simulator runtimes your application needs.
+
+### mise
 
 ```sh
 mise use -g github:ciscoriordan/storescreens-cli@4.0.0
 storescreens --version
 ```
 
-To build from source:
+### Homebrew
+
+```sh
+brew install ciscoriordan/tap/storescreens
+```
+
+### curl
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ciscoriordan/storescreens-cli/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The curl installer downloads the latest release into `~/.local/bin`, including the MCP server and XCUITest template resource bundle. Add that directory to your shell's PATH for future sessions, or set `INSTALL_DIR` when running the installer to choose another location.
+
+### Build from source
 
 ```sh
 swift build -c release
 .build/release/storescreens --help
 ```
 
-Koubou and ASC CLI are separate tools. Follow their installation instructions; capture itself requires neither tool and makes no App Store Connect requests.
+Install your chosen rendering and App Store Connect tools separately. Capture itself requires neither Koubou nor ASC CLI and makes no App Store Connect requests.
 
 ## Capture workflow
 
@@ -66,6 +83,8 @@ Use `storescreens list` to choose names installed on the machine. iPhone 17 Pro 
 
 The configuration also accepts `workspace` instead of `project`, `launch_arguments`, `derived_data_path`, `warmup_run`, `preflight`, `dismiss_system_alerts`, `status_bar`, `status_bar_arguments`, `keep_runs`, `keep_old_previews`, `locale_flags`, and `log_level`. `keep_runs: 1` merges successful captures into the output directory; zero keeps every run, and larger values keep that many timestamped runs.
 
+Set `code_signing_allowed: true` when the app needs signed simulator entitlements for Keychain or app-group access. Capture uses the project's simulator signing settings in that case. The default remains `false`; no App Store Connect credentials are required.
+
 Use `screenshot_appearances: {Home: dark}` to restrict an individual screenshot to an appearance. This requires an explicit `screenshots` list. Unrestricted screenshots run in the top-level appearances. The appearance stays in the output path and manifest, so downstream renderers receive the correct source image.
 
 ## Commands
@@ -98,13 +117,15 @@ Set `result_bundle_dir` to preserve original result bundles and test diagnostics
 
 ## Handoff to Koubou and ASC CLI
 
-`manifest.json` records the scheme, generator version, timestamp, simulator, screen-size label, locale, appearance, screenshot names, and relative PNG paths. For example, a capture can produce `en-US/light/iPhone_6.9_Home.png`. Reference those PNG paths as Koubou image assets; keep the Koubou configuration, templates, fonts, reviewed copy, and capture configuration in the application's source control.
+Raw PNGs work with other screenshot renderers and upload tools too. Koubou and ASC CLI are our recommended combination, and the examples below use them.
+
+`manifest.json` records the scheme, generator version, timestamp, simulator, screen-size label, locale, appearance, screenshot names, and relative PNG paths. For example, a capture can produce `en-US/light/iPhone_6.9_Home.png`. Reference those PNG paths as Koubou image assets; keep the rendering configuration, templates, fonts, reviewed copy, and capture configuration in the application's source control.
 
 StoreScreens never uploads automatically. Render and review with Koubou, then use `asc screenshots upload` or ASC CLI's reviewed upload workflow. Keep existing approved device sizes, locale coverage, and copy during migration. A tooling change does not require replacing a queued App Store submission.
 
 ## Upgrading from version 3
 
-Version 4 removes the built-in renderer, bezel library, templates, translations, search previews, Wall of Apps, binary upload, and all App Store Connect commands and MCP tools. Use Koubou and ASC CLI directly for those operations. Existing credentials, including files under `~/.storescreens/`, are left in place.
+Version 4 removes the built-in renderer, bezel library, templates, translations, search previews, Wall of Apps, binary upload, and all App Store Connect commands and MCP tools. Use separate rendering and App Store Connect tools; we recommend Koubou and ASC CLI. Existing credentials, including files under `~/.storescreens/`, are left in place.
 
 Old `render`, `app_store_connect`, `search_preview`, and `upload` sections cause an actionable configuration error. To convert the capture settings:
 
