@@ -1,4 +1,8 @@
+![StoreScreens — XCUITest Screenshot Orchestration](assets/banner.svg)
+
 # StoreScreens
+
+**XCUITest Screenshot Orchestration**
 
 StoreScreens sets up simulators, runs your XCUITest screenshot flows, and collects authentic raw captures across devices, locales, and appearances. It provides a Swift CLI and a capture-only MCP server.
 
@@ -124,6 +128,8 @@ python3 scripts/smoke-capture.py
 ```
 
 The simulator smoke test navigates a fixture app, captures two authentic screens, verifies the raw manifest, and collects the same images from a preserved `.xcresult`. It keeps its temporary artifacts for inspection.
+
+Banner assets are generated from code with the bundled OFL-licensed Barlow Condensed fonts. Run `python3 scripts/generate-banner.py` after changing the tagline or artwork; it requires `fonttools`, `cairosvg`, and the Cairo library.
 
 ## License
 
