@@ -110,8 +110,8 @@ struct StorescreensMCP {
             name: "capture",
             description: """
             Run App Store screenshot capture. Boots simulators, runs UI tests, and collects screenshots.
-            Returns a compact summary with a captureId. Call get_capture_result(captureId) to get the \
-            full manifest and per-screenshot paths if needed.
+            Returns a taskId immediately. Poll get_capture_status(task_id) until completion, then \
+            call get_capture_result(capture_id) for the full manifest and screenshot paths.
             """,
             inputSchema: .object([
                 "type": .string("object"),
