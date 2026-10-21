@@ -103,3 +103,7 @@ asc screenshots upload --app "$APP_ID" --version "$APP_VERSION" \
 ```
 
 This example does not upload or replace screenshots. Actual uploads remain an explicit release step, using your approved copy, device sizes, locale coverage, and target version.
+
+## Validation
+
+The 4.0.1 workflow was exercised with a real iOS app on iPhone 18 Pro Max and iPad Pro 13-inch (M5) simulators running iOS 27. English and Greek, light and dark, and two screens produced 16 raw images and 16 Koubou renders. Both sequential and parallel MCP capture passed. Partial captures preserved the other 14 images; a test that saved a PNG and then failed left all prior output unchanged; a corrected rerun recovered successfully. Koubou 0.21.0 produced the expected 1320×2868 phone and 2064×2752 tablet outputs.
