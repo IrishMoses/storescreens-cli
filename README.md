@@ -1,4 +1,4 @@
-![StoreScreens — XCUITest Screenshot Orchestration](assets/banner.png?v=logo)
+![StoreScreens — XCUITest Screenshot Orchestration](assets/banner.png?v=interfaces)
 
 # StoreScreens
 
@@ -158,4 +158,4 @@ Banner assets are generated from the original app icon in `assets/logo.png` and 
 
 ## License
 
-MIT. Historical version 3 source and releases remain available in Git history and GitHub releases.
+MIT.

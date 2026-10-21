@@ -31,7 +31,7 @@ FONTS = {
 }
 INK, MUTED, PAPER = "#162335", "#4f5f74", "#f8fafc"
 TAGLINE = "XCUITest screenshot orchestration."
-SUPPORTING_LINE = "Automate simulators and screenshot collection with MCP."
+SUPPORTING_LINE = "Automate simulators and screenshot collection via MCP/CLI/Skill."
 LOGO = base64.b64encode((ASSETS / "logo.png").read_bytes()).decode("ascii")
 
 
