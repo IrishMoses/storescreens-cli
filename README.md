@@ -41,7 +41,45 @@ swift build -c release
 .build/release/storescreens --help
 ```
 
-Install your chosen rendering and App Store Connect tools separately. Capture itself requires neither Koubou nor ASC CLI and makes no App Store Connect requests.
+### Agent skill and MCP setup
+
+From your application's project directory, install the [StoreScreens agent skill](https://github.com/ciscoriordan/storescreens-skill) with Node.js 22.20 or later:
+
+```sh
+npx skills add ciscoriordan/storescreens-skill
+```
+
+Choose your coding agent when prompted. Add `-g` to install across projects, then start a new agent session and ask it to set up screenshot capture for your app.
+
+For MCP, add a local stdio server that launches `storescreens-mcp`. With the Codex CLI:
+
+```sh
+codex mcp add storescreens -- storescreens-mcp
+```
+
+For a mise-managed installation, use `mise exec -- storescreens-mcp` as the server command. Other clients can use [mcp.json.example](mcp.json.example). See the [Codex MCP setup guide](https://learn.chatgpt.com/docs/extend/mcp) for app settings.
+
+### Koubou for screenshot rendering
+
+[Koubou](https://github.com/bitomule/Koubou) adds layouts, device frames, captions, and localization to your raw captures. It is optional; use another renderer if you prefer.
+
+```sh
+brew install bitomule/tap/koubou
+kou --version
+```
+
+With a mise-managed Python, you can instead run `python3 -m pip install koubou`. Run `kou setup-html` to prepare HTML rendering, or `kou install-skills` to add Koubou's agent skills. See the [Koubou installation guide](https://github.com/bitomule/Koubou#-installation).
+
+### ASC CLI for App Store Connect
+
+[ASC CLI](https://asccli.sh/) manages App Store Connect and uploads your rendered screenshots. It is also optional and has its own credentials. StoreScreens capture makes no App Store Connect requests.
+
+```sh
+brew install asc
+asc --version
+```
+
+You can also install it with `curl -fsSL https://asccli.sh/install | bash`. Register your App Store Connect API key with `asc auth login`; `asc auth login --help` lists the key ID, issuer ID, and private-key options. Run `asc install-skills` if you want its agent skills.
 
 ## Capture workflow
 
