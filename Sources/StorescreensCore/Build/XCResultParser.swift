@@ -19,7 +19,7 @@ package struct XCTestSummary: Sendable {
     }
 
     /// True when xcresulttool reported at least one non-passed, non-skipped test.
-    package var hasFailures: Bool { failedTests > 0 }
+    package var hasFailures: Bool { failedTests > 0 || !failures.isEmpty }
 }
 
 package struct XCResultParser {

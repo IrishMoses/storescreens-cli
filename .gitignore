@@ -9,3 +9,4 @@ DerivedData/
 .claude/
 
 *.v3-backup
+__pycache__/

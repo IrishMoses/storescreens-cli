@@ -15,7 +15,7 @@ Prebuilt binaries require an Apple silicon Mac with macOS 14 or later. Capture r
 ### mise
 
 ```sh
-mise use -g github:ciscoriordan/storescreens-cli@4.0.0
+mise use -g github:ciscoriordan/storescreens-cli@4.0.1
 storescreens --version
 ```
 
@@ -103,7 +103,7 @@ Use `screenshot_appearances: {Home: dark}` to restrict an individual screenshot 
 
 Capture flags include `--locale`, `--appearance`, `--only`, `--no-parallel`, `--retries`, `--derived-data-path`, `--result-bundle-dir`, `--skip-check`, and `--verbose`. `--xcresult` collects XCTAttachments instead of filesystem PNGs. `--mode simple` captures an installed launch state after building the app; it does not navigate through screens. `--keep-alive` applies to simple capture.
 
-A narrowed run preserves manifest entries outside its locale or appearance scope. `--only Home,Search` replaces matching screenshots while keeping other names. Full runs replace the manifest. Failed captures do not publish staged images over previous successful captures. Simultaneous capture processes are rejected because the test harness uses shared cache hints.
+A narrowed run preserves manifest entries outside its locale or appearance scope. `--only Home,Search` replaces matching screenshots while keeping other names. Full runs replace the manifest. A failed test rejects the capture even if it saved screenshots; failed captures do not publish staged images over previous successful captures. Simultaneous capture processes are rejected because the test harness uses shared cache hints.
 
 To collect results from a separate test run:
 
@@ -114,6 +114,8 @@ storescreens collect --result-bundle TestResults.xcresult \
 ```
 
 Set `result_bundle_dir` to preserve original result bundles and test diagnostics in a unique directory per invocation. Without it, result bundles are temporary. Filesystem PNGs remain the primary capture path.
+
+Capture disables Xcode's additional simulator diagnostics collection after failed tests. Failure messages and screenshot attachments remain in the `.xcresult`; the capture result does not wait for a full simulator diagnostics archive.
 
 ## Handoff to Koubou and ASC CLI
 
@@ -139,6 +141,8 @@ This saves an exact, private-permission `storescreens.yml.v3-backup` before writ
 
 Configure `storescreens-mcp` as a stdio server; see [mcp.json.example](mcp.json.example). The server exposes only `capture`, `get_capture_status`, `get_capture_result`, `check`, `list_simulators`, `list_screenshots`, `get_screenshot`, `take_screenshot`, `read_config`, and `write_config`. Capture returns a task ID and streams progress through status polling. It uses the same capture implementation as the CLI.
 
+The MCP `capture` tool accepts `locales`, `appearances`, `only`, `no_parallel`, and `retries`, as well as configuration and DerivedData paths. Narrowed MCP runs preserve the other images and manifest entries just like the CLI. See the [complete capture and Koubou example](examples/README.md) for a standard-library MCP client, partial reruns, framing configurations, and an ASC CLI upload preview.
+
 ## Development
 
 ```sh
@@ -148,7 +152,7 @@ bash scripts/test-mcp.sh
 python3 scripts/smoke-capture.py
 ```
 
-The simulator smoke test navigates a fixture app, captures two authentic screens, verifies the raw manifest, and collects the same images from a preserved `.xcresult`. It keeps its temporary artifacts for inspection.
+The simulator smoke test navigates a fixture app, captures two authentic screens, verifies partial reruns, then saves a screenshot and deliberately fails a test. It requires a nonzero capture exit and byte-identical previous output, verifies recovery, and collects the original images from a preserved `.xcresult`. It keeps its temporary artifacts for inspection.
 
 Banner assets are generated from code with the bundled OFL-licensed Barlow Condensed fonts. Run `python3 scripts/generate-banner.py` after changing the tagline or artwork; it requires `fonttools`, `cairosvg`, and the Cairo library.
 

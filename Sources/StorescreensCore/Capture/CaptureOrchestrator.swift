@@ -624,6 +624,13 @@ package struct CaptureOrchestrator: Sendable {
                 }
             }
         } : nil
+        defer {
+            liveWatcher?.cancel()
+            pipeHandle?.readabilityHandler = nil
+            try? pipeHandle?.close()
+            try? pipeLogHandle?.close()
+            unlink(pipePath)
+        }
 
         // Per-device test filter overrides the top-level target/class collapse
         // when set. The shared resolver turns bare method names into fully
@@ -688,6 +695,9 @@ package struct CaptureOrchestrator: Sendable {
                     try? await simulatorManager.settleClones(name: device.simulatorName, keepUDID: device.udid)
                 }
                 try? FileManager.default.removeItem(atPath: resultPath)
+                // Never carry images from a failed attempt into a later retry.
+                try? FileManager.default.removeItem(at: deviceScreenshotsDir)
+                try FileManager.default.createDirectory(at: deviceScreenshotsDir, withIntermediateDirectories: true)
                 _ = try await buildRunner.test(
                     project: config.project,
                     workspace: config.workspace,
@@ -764,10 +774,6 @@ package struct CaptureOrchestrator: Sendable {
         } else {
             await logLine("✓ Tests completed [\(appearance)]")
         }
-
-        try? pipeHandle?.close()
-        try? pipeLogHandle?.close()
-        unlink(pipePath)
 
         await logLine("Extracting screenshots [\(appearance)]...")
         await logLine("  xcresult path: \(resultPath)")

@@ -86,6 +86,7 @@ package actor XcodeBuildRunner {
             "-destination", destination,
             "-resultBundlePath", resultBundlePath,
             "-parallel-testing-enabled", "NO",
+            "-collect-test-diagnostics", "never",
         ]
 
         if let target = testTarget, let cls = testClass {
@@ -113,12 +114,7 @@ package actor XcodeBuildRunner {
             print(result.stdout)
         }
 
-        // Tests may fail assertions but still produce screenshots
-        guard FileManager.default.fileExists(atPath: resultBundlePath) else {
-            throw CLIError.resultBundleNotFound(path: resultBundlePath)
-        }
-
-        return resultBundlePath
+        return try await validatedTestResult(result, device: destinationUDID, path: resultBundlePath)
     }
 
     /// Build and test in a single xcodebuild invocation.
@@ -160,6 +156,7 @@ package actor XcodeBuildRunner {
                 "-destination", "platform=macOS,arch=arm64",
                 "-resultBundlePath", resultBundlePath,
                 "-parallel-testing-enabled", "NO",
+                "-collect-test-diagnostics", "never",
             ]
         } else {
             args += [
@@ -168,6 +165,7 @@ package actor XcodeBuildRunner {
                 "-destination", "platform=iOS Simulator,id=\(destinationUDID)",
                 "-resultBundlePath", resultBundlePath,
                 "-parallel-testing-enabled", "NO",
+                "-collect-test-diagnostics", "never",
                 "CODE_SIGNING_ALLOWED=\(codeSigningAllowed ? "YES" : "NO")",
                 "ONLY_ACTIVE_ARCH=YES",
                 "EXCLUDED_ARCHS=x86_64",
@@ -202,35 +200,21 @@ package actor XcodeBuildRunner {
             print(result.stdout)
         }
 
-        // Detect hard build failures (package resolution, compile errors) that prevent any
-        // screenshots from being captured. These must be distinguished from test assertion
-        // failures, which also set a non-zero exit code but DO produce screenshots.
-        // Check for known fatal patterns in stderr.
-        if !result.succeeded {
-            let hardFailurePatterns = [
-                "Could not resolve package dependencies",
-                "** BUILD FAILED **",
-                "Couldn't update repository",
-                "error: build had compilation errors",
-            ]
-            if hardFailurePatterns.contains(where: { result.stderr.contains($0) }) {
-                throw CLIError.buildFailed(output: result.stderr)
-            }
-            // The test runner failing to launch writes a result bundle like any
-            // other failure, so it has to be recognized from the output.
-            // Throwing lets the caller's retry settle the simulator and try
-            // again, instead of ending the capture with a bare "no screenshots".
-            if let signature = TestRunDiagnostics.testRunnerLaunchFailure(in: result.stdout + result.stderr) {
-                throw CLIError.testRunnerLaunchFailed(reason: signature)
-            }
-        }
+        return try await validatedTestResult(result, device: destinationUDID, path: resultBundlePath)
+    }
 
-        // Tests may fail assertions but still produce screenshots
-        guard FileManager.default.fileExists(atPath: resultBundlePath) else {
-            throw CLIError.resultBundleNotFound(path: resultBundlePath)
+    /// A result bundle can exist after a failed test or an interrupted run.
+    /// Check both the process and the recorded tests before accepting any images.
+    private func validatedTestResult(_ result: ProcessResult, device: String, path: String) async throws -> String {
+        let parser = XCResultParser()
+        let summary = await parser.extractTestSummary(resultBundlePath: path)
+        let details = !result.succeeded || summary?.hasFailures == true
+            ? await parser.extractFailureSummaries(resultBundlePath: path) : []
+        try TestRunDiagnostics.requireSuccess(result, device: device, summary: summary, details: details)
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw CLIError.resultBundleNotFound(path: path)
         }
-
-        return resultBundlePath
+        return path
     }
 
     /// Simple build (for simple capture mode).

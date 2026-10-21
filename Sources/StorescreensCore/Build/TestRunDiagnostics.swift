@@ -23,4 +23,30 @@ package enum TestRunDiagnostics {
     package static func testRunnerLaunchFailure(in output: String) -> String? {
         launchFailureSignatures.first { output.contains($0) }
     }
+
+    package static func requireSuccess(
+        _ result: ProcessResult, device: String, summary: XCTestSummary?, details: [String] = []
+    ) throws {
+        let output = result.stdout + "\n" + result.stderr
+        if !result.succeeded {
+            let buildFailures = ["Could not resolve package dependencies", "** BUILD FAILED **",
+                                 "Couldn't update repository", "error: build had compilation errors"]
+            if buildFailures.contains(where: output.contains) {
+                throw CLIError.buildFailed(output: output)
+            }
+            if let signature = testRunnerLaunchFailure(in: output) {
+                throw CLIError.testRunnerLaunchFailed(reason: signature)
+            }
+        }
+        guard result.succeeded, summary?.hasFailures != true else {
+            let failures = details.isEmpty
+                ? summary?.failures.map { "\($0.testName): \($0.failureText)" } ?? [] : details
+            let reason = failures.isEmpty ? output : failures.joined(separator: "\n")
+            let counts = summary.map { "\($0.failedTests) of \($0.totalTests) tests failed.\n" } ?? ""
+            throw CLIError.testFailed(
+                device: device,
+                output: "xcodebuild exited with status \(result.exitCode).\n\(counts)\(reason)"
+            )
+        }
+    }
 }

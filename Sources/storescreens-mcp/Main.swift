@@ -128,6 +128,20 @@ struct StorescreensMCP {
                         "type": .string("string"),
                         "description": .string("Persistent DerivedData directory for faster incremental builds. Reused across runs; overrides storescreens.yml."),
                     ]),
+                    "locales": .object([
+                        "type": .string("array"), "items": .object(["type": .string("string")]),
+                        "description": .string("Limit the run to these locales while preserving other captures."),
+                    ]),
+                    "appearances": .object([
+                        "type": .string("array"), "items": .object(["type": .string("string")]),
+                        "description": .string("Limit the run to light or dark while preserving other captures."),
+                    ]),
+                    "only": .object([
+                        "type": .string("string"),
+                        "description": .string("Comma-separated screenshot name prefixes to recapture; preserve other names."),
+                    ]),
+                    "no_parallel": .object(["type": .string("boolean"), "description": .string("Run one device at a time.")]),
+                    "retries": .object(["type": .string("integer"), "minimum": .int(0), "description": .string("Additional attempts after a failed run; default 1.")]),
                 ]),
             ])
         ),
@@ -333,12 +347,24 @@ struct StorescreensMCP {
             return .init(content: [.text("Another capture is already running. Poll get_capture_status until it finishes.")], isError: true)
         }
         let configPath = params.arguments?["config_path"]?.stringValue ?? "storescreens.yml"
+        let locales = params.arguments?["locales"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        let appearances = params.arguments?["appearances"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        let only = params.arguments?["only"]?.stringValue
+        let noParallel = params.arguments?["no_parallel"]?.boolValue ?? false
+        let retries = params.arguments?["retries"]?.intValue ?? 1
+        let scope = CaptureScope(locales: locales, appearances: appearances, someScreenshotsOnly: only != nil)
         var captureConfig: CaptureConfig
         do {
+            guard retries >= 0 else { throw CLIError.configInvalid(reason: "retries must be nonnegative") }
+            guard only.map({ !$0.split(separator: ",").isEmpty }) ?? true else {
+                throw CLIError.configInvalid(reason: "only requires a screenshot prefix")
+            }
             if let dir = params.arguments?["directory"]?.stringValue {
                 guard FileManager.default.changeCurrentDirectoryPath(dir) else { throw CLIError.configNotFound(path: dir) }
             }
             captureConfig = try ConfigLoader().load(from: configPath)
+            if !locales.isEmpty { captureConfig.locales = locales }
+            if !appearances.isEmpty { captureConfig.appearances = appearances }
             if let ddp = params.arguments?["derived_data_path"]?.stringValue {
                 captureConfig.derivedDataPath = (ddp as NSString).expandingTildeInPath
             }
@@ -358,7 +384,9 @@ struct StorescreensMCP {
             let orchestrator = CaptureOrchestrator()
 
             do {
-                let result = try await orchestrator.run(config: captureConfig) { event in
+                let result = try await orchestrator.run(
+                    config: captureConfig, noParallel: noParallel, retries: retries, only: only, scope: scope
+                ) { event in
                     switch event {
                     case .phase(let msg):
                         // Internal log dir signal - store for status polling, don't surface as an event
