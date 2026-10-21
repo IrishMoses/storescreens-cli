@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Generate StoreScreens' capture-only banner and social image.
 
-Requires fonttools and cairosvg. Bundled Barlow Condensed fonts are OFL licensed;
-text becomes SVG outlines so GitHub does not depend on installed fonts.
+Requires fonttools with WOFF support and cairosvg. The original app icon is
+embedded unchanged; bundled IBM Plex Sans text becomes SVG outlines so GitHub
+does not depend on installed fonts.
 """
 from html import escape
 from pathlib import Path
+import base64
 import os
 import sys
 
@@ -24,14 +26,16 @@ from fontTools.ttLib import TTFont
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 FONTS = {
-    weight: TTFont(ASSETS / "fonts" / f"BarlowCondensed-{weight}.ttf")
+    weight: TTFont(ASSETS / "fonts" / f"IBMPlexSans-{weight}.woff2")
     for weight in ["Regular", "SemiBold"]
 }
-INK, MUTED, ACCENT, LINE, PAPER = "#202823", "#56645a", "#b44c2d", "#b9c2b6", "#f0f0e6"
+INK, MUTED, PAPER = "#162335", "#4f5f74", "#f8fafc"
+TAGLINE = "XCUITest screenshot orchestration."
 SUPPORTING_LINE = "Automate simulators and screenshot collection with MCP."
+LOGO = base64.b64encode((ASSETS / "logo.png").read_bytes()).decode("ascii")
 
 
-def text(value, x, y, size, weight="Regular", color=INK, tracking=0):
+def text(value, x, y, size, weight="Regular", color=INK, max_width=None):
     font = FONTS[weight]
     glyphs, cmap = font.getGlyphSet(), font.getBestCmap()
     scale = size / font["head"].unitsPerEm
@@ -41,44 +45,35 @@ def text(value, x, y, size, weight="Regular", color=INK, tracking=0):
         if name is None:
             raise ValueError(f"Font does not contain {char!r}")
         glyphs[name].draw(TransformPen(pen, (1, 0, 0, 1, advance, 0)))
-        advance += font["hmtx"].metrics[name][0] + tracking / scale
+        advance += font["hmtx"].metrics[name][0]
+    if max_width is not None and advance * scale > max_width:
+        raise ValueError(f"Banner text exceeds its column: {value!r}")
     return f'<path aria-label="{escape(value, quote=True)}" fill="{color}" transform="translate({x} {y}) scale({scale} {-scale})" d="{pen.getCommands()}"/>'
-
-
-def screen(x, y, number, active=False):
-    stroke = ACCENT if active else MUTED
-    rows = [f'<rect x="{x+16}" y="{y+offset}" width="{width}" height="5" fill="{stroke}" opacity="{opacity}"/>'
-            for offset, width, opacity in [(43, 43, .8), (63, 60, .3), (75, 47, .3), (124, 60, .3), (136, 39, .3)]]
-    return ''.join([
-        f'<rect x="{x}" y="{y}" width="96" height="180" rx="10" fill="{PAPER}" stroke="{stroke}" stroke-width="2"/>',
-        f'<path d="M{x+36} {y+13}h24" stroke="{stroke}" stroke-width="3"/>',
-        *rows,
-        f'<rect x="{x+16}" y="{y+91}" width="60" height="20" fill="{stroke}" opacity=".12"/>',
-        text(number, x+16, y+168, 16, color=stroke),
-    ])
 
 
 def render(height):
     social = height == 640
-    shift = 72 if social else 0
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="{height}" viewBox="0 0 1280 {height}">',
-             '<title>StoreScreens — XCUITest Screenshot Orchestration</title>',
-             f'<desc>{escape(SUPPORTING_LINE)}</desc>',
-             f'<rect width="1280" height="{height}" fill="{PAPER}"/>',
-             f'<path d="M72 {58+shift}h42" stroke="{ACCENT}" stroke-width="3"/>',
-             text("CAPTURE / XCUITEST", 126, 64+shift, 18, "SemiBold", ACCENT, 1.5),
-             text("StoreScreens", 68, 202+shift, 125, "SemiBold", tracking=-1),
-             text("XCUITest Screenshot Orchestration", 72, 267+shift, 42, "SemiBold"),
-             text(SUPPORTING_LINE, 72, 316+shift, 28, color=MUTED),
-             screen(916, 128+shift, "01"), screen(978, 160+shift, "02"), screen(1040, 192+shift, "03", True),
-             f'<path d="M72 {386+shift}H1208" stroke="{LINE}"/>',
-             text("storescreens.app", 72, 424+shift, 22, "SemiBold"),
-             text("SIMULATORS  /  UI TESTS  /  RAW PNGs", 918, 424+shift, 18, color=MUTED),
-             '</svg>']
+    logo_size = 336 if social else 280
+    logo_x = 52
+    logo_y = (height - logo_size) / 2
+    text_x = logo_x + logo_size + 56
+    width = 1280 - text_x - 52
+    middle = height / 2
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="{height}" viewBox="0 0 1280 {height}">',
+        '<title>StoreScreens — XCUITest Screenshot Orchestration</title>',
+        f'<desc>The StoreScreens app icon beside its name. {escape(SUPPORTING_LINE)}</desc>',
+        f'<rect width="1280" height="{height}" fill="{PAPER}"/>',
+        f'<image x="{logo_x}" y="{logo_y}" width="{logo_size}" height="{logo_size}" preserveAspectRatio="xMidYMid meet" xlink:href="data:image/png;base64,{LOGO}"/>',
+        text("StoreScreens", text_x, middle - 40, 84, "SemiBold", max_width=width),
+        text(TAGLINE, text_x + 2, middle + 27, 35, max_width=width - 2),
+        text(SUPPORTING_LINE, text_x + 2, middle + 77, 23, color=MUTED, max_width=width - 2),
+        '</svg>',
+    ]
     return ''.join(parts).encode()
 
 
-banner = render(480)
+banner = render(420)
 (ASSETS / "banner.svg").write_bytes(banner)
 cairosvg.svg2png(bytestring=banner, write_to=str(ASSETS / "banner.png"), scale=2)
 cairosvg.svg2png(bytestring=render(640), write_to=str(ASSETS / "social.png"))
