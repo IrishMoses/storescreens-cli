@@ -31,6 +31,14 @@ final class FailedCaptureTests: XCTestCase {
         try TestRunDiagnostics.requireSuccess(result(0), device: "sim", summary: nil)
     }
 
+    func testLegacyFailureIsRejectedWhenTheModernSummaryIsUnavailable() {
+        XCTAssertThrowsError(try TestRunDiagnostics.requireSuccess(
+            result(0), device: "sim", summary: nil, details: ["XCTAssertTrue failed at Screens.swift:12"]
+        )) {
+            XCTAssertTrue($0.localizedDescription.contains("Screens.swift:12"))
+        }
+    }
+
     func testLaunchFailureStillReportsItsRecoveryInstruction() {
         XCTAssertThrowsError(try TestRunDiagnostics.requireSuccess(
             result(65, output: "Failed to install or launch the test runner"), device: "sim", summary: nil

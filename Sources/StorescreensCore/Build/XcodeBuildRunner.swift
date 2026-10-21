@@ -208,7 +208,7 @@ package actor XcodeBuildRunner {
     private func validatedTestResult(_ result: ProcessResult, device: String, path: String) async throws -> String {
         let parser = XCResultParser()
         let summary = await parser.extractTestSummary(resultBundlePath: path)
-        let details = !result.succeeded || summary?.hasFailures == true
+        let details = !result.succeeded || summary == nil || summary?.hasFailures == true
             ? await parser.extractFailureSummaries(resultBundlePath: path) : []
         try TestRunDiagnostics.requireSuccess(result, device: device, summary: summary, details: details)
         guard FileManager.default.fileExists(atPath: path) else {

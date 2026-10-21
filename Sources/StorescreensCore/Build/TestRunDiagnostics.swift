@@ -38,7 +38,7 @@ package enum TestRunDiagnostics {
                 throw CLIError.testRunnerLaunchFailed(reason: signature)
             }
         }
-        guard result.succeeded, summary?.hasFailures != true else {
+        guard result.succeeded, summary?.hasFailures != true, details.isEmpty else {
             let failures = details.isEmpty
                 ? summary?.failures.map { "\($0.testName): \($0.failureText)" } ?? [] : details
             let reason = failures.isEmpty ? output : failures.joined(separator: "\n")
