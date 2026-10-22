@@ -6,7 +6,19 @@
 
 StoreScreens sets up simulators, runs your XCUITest screenshot flows, and collects authentic raw captures across devices, locales, and appearances. It provides a Swift CLI and a capture-only MCP server.
 
-Version 4 focuses on capture. Use the screenshot renderer and App Store Connect command-line tool you prefer. We recommend [Koubou](https://github.com/bitomule/Koubou) for screenshot composition, device frames, captions, localization, and rendering, and [ASC CLI](https://asccli.sh/) for App Store Connect and Apple Ads management, including uploads. These are optional downstream tools; StoreScreens does not implement those features or manage their credentials.
+## Why StoreScreens?
+
+Taking a screenshot is easy. The valuable work is making the whole run repeatable: preparing the right app state, switching devices and languages, waiting for the UI to finish rendering, and checking the results.
+
+StoreScreens provides one capture workflow across your apps, so each project does not need its own simulator setup and collection scripts. Your XCUITests define app state, navigation, and explicit waits. StoreScreens prepares simulators and paired devices, runs those tests, rejects failed or empty captures, and collects named PNGs with a manifest for review. Failed runs leave previous successful captures intact.
+
+The division of work is simple:
+
+- **StoreScreens:** prepare, capture, and validate test results.
+- **[Koubou](https://github.com/bitomule/Koubou):** compose and render screenshots, including device frames, captions, and localization.
+- **[ASC CLI](https://asccli.sh/):** upload screenshots and manage App Store Connect releases.
+
+Koubou and ASC CLI are our recommendations, not required dependencies. Use the screenshot renderer and App Store Connect command-line tool you prefer. StoreScreens focuses on capture and does not manage their credentials.
 
 ## Install
 
