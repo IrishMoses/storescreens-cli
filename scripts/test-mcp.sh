@@ -80,9 +80,11 @@ if echo "$resp" | grep -q '"tools"'; then
   tool_count=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['result']['tools']))" 2>/dev/null || echo "?")
   echo "$resp" | python3 -c '
 import json, sys
-names = {tool["name"] for tool in json.load(sys.stdin)["result"]["tools"]}
+tools = {tool["name"]: tool for tool in json.load(sys.stdin)["result"]["tools"]}
+names = set(tools)
 expected = {"capture", "get_capture_status", "get_capture_result", "check", "list_simulators", "list_screenshots", "get_screenshot", "take_screenshot", "read_config", "write_config"}
 assert names == expected, names
+assert tools["list_simulators"]["inputSchema"]["properties"]["include_watch"]["type"] == "boolean"
 '
   pass "tools/list → $tool_count capture tools registered"
 else

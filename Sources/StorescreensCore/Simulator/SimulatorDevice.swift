@@ -4,6 +4,16 @@ package struct SimulatorDeviceList: Codable {
     package let devices: [String: [SimulatorDevice]]
 }
 
+package struct SimulatorPairList: Decodable {
+    package let pairs: [String: SimulatorPair]
+}
+
+package struct SimulatorPair: Decodable {
+    package struct Endpoint: Decodable { package let udid: String }
+    package let watch: Endpoint
+    package let phone: Endpoint
+}
+
 package struct SimulatorDevice: Codable, Sendable {
     package let udid: String
     package let name: String
@@ -82,8 +92,12 @@ package struct ResolvedDevice: Sendable {
     package let udid: String
     package let deviceTypeIdentifier: String
     package let appStoreSize: AppStoreScreenSize
-    /// True when this device targets macOS (tests run natively, not in a simulator).
-    package let isMacOS: Bool
+    /// The Xcode platform used to build and run this device's capture.
+    package let platform: CapturePlatform
+    package var isMacOS: Bool { platform == .macOS }
+    package var isWatchOS: Bool { platform == .watchOS }
+    package let companion: SimulatorDevice?
+    package let companionScheme: String?
     /// Per-device test selection, preserved from the source DeviceConfig. When
     /// non-nil and non-empty, the orchestrator passes each entry (resolved by
     /// `DeviceConfig.resolvedTestSelectors`) as a `-only-testing` arg, taking
@@ -96,13 +110,18 @@ package struct ResolvedDevice: Sendable {
         deviceTypeIdentifier: String,
         appStoreSize: AppStoreScreenSize,
         isMacOS: Bool = false,
+        platform: CapturePlatform? = nil,
+        companion: SimulatorDevice? = nil,
+        companionScheme: String? = nil,
         tests: [String]? = nil
     ) {
         self.simulatorName = simulatorName
         self.udid = udid
         self.deviceTypeIdentifier = deviceTypeIdentifier
         self.appStoreSize = appStoreSize
-        self.isMacOS = isMacOS
+        self.platform = platform ?? (isMacOS ? .macOS : appStoreSize.isAppleWatch ? .watchOS : .iOS)
+        self.companion = companion
+        self.companionScheme = companionScheme
         self.tests = tests
     }
 }

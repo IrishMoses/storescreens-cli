@@ -41,6 +41,22 @@ package struct ConfigLoader {
     }
 
     package static func validate(_ config: CaptureConfig) throws {
+        for device in config.devices {
+            if let scheme = device.companionScheme,
+               device.companion == nil || scheme.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw CLIError.configInvalid(reason: "companion_scheme requires a companion simulator and a nonempty iOS scheme")
+            }
+            if let platform = device.platform, CapturePlatform(configValue: platform) == nil {
+                throw CLIError.configInvalid(reason: "Unsupported platform '\(platform)'. Use iOS, watchOS, or macOS.")
+            }
+            if let companion = device.companion, companion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw CLIError.configInvalid(reason: "companion must name an iPhone simulator")
+            }
+            if device.companion != nil, let platform = device.platform,
+               CapturePlatform(configValue: platform) != .watchOS {
+                throw CLIError.configInvalid(reason: "companion is only supported for watchOS devices")
+            }
+        }
         guard !config.scheme.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw CLIError.configInvalid(reason: "scheme must not be empty")
         }

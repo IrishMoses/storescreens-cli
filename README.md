@@ -15,7 +15,7 @@ Prebuilt binaries require an Apple silicon Mac with macOS 14 or later. Capture r
 ### mise
 
 ```sh
-mise use -g github:ciscoriordan/storescreens-cli@4.0.1
+mise use -g github:ciscoriordan/storescreens-cli@4.1.0
 storescreens --version
 ```
 
@@ -125,6 +125,39 @@ Set `code_signing_allowed: true` when the app needs signed simulator entitlement
 
 Use `screenshot_appearances: {Home: dark}` to restrict an individual screenshot to an appearance. This requires an explicit `screenshots` list. Unrestricted screenshots run in the top-level appearances. The appearance stays in the output path and manifest, so downstream renderers receive the correct source image.
 
+### Apple Watch
+
+Watch-only apps and Watch apps with an iPhone companion use the same CLI and MCP capture workflow. Install a watchOS simulator runtime in Xcode and list Watch devices with `storescreens list --include-watch`. Select the Watch app's scheme when generating the configuration and harness:
+
+```sh
+storescreens init --scheme MyWatchApp
+storescreens setup --scheme MyWatchApp
+```
+
+The scheme must include a watchOS UI Testing Bundle targeting the Watch app. Add navigation to the generated test, then run `storescreens prepare` and `storescreens capture`. A Watch configuration looks like this; use simulator names installed on your machine:
+
+```yaml
+project: MyApp.xcodeproj
+scheme: MyWatchApp
+devices:
+  - simulator: Apple Watch Series 12 (46mm)
+    platform: watchOS
+    # For an app that requires an iPhone companion:
+    # companion: iPhone 18 Pro
+    # companion_scheme: MyPhoneApp
+locales: [en-US, el]
+appearances: [dark]
+test_target: MyWatchAppUITests
+test_class: ScreenshotTests
+screenshots: [Home, Detail]
+output_dir: screenshots/watch/raw
+result_bundle_dir: screenshots/watch/results
+```
+
+`platform: watchOS` is inferred from the simulator when omitted. `companion` pairs and boots the specified iPhone with the Watch; an existing pairing with another phone is preserved and reported as an error. Set `companion_scheme` to the iPhone app's separate iOS scheme to build, install, and launch it before the Watch tests. Without that field, install and prepare the companion app separately. Keep the iPhone target out of the Watch scheme's test build action. Paired Watch devices run sequentially so activating a pair cannot interrupt another capture. Capture the phone and Watch with separate configurations and schemes.
+
+Watch captures use dark appearance, including when `appearances` is omitted. Light-only selections are rejected. iOS appearance and status-bar overrides do not run on watchOS. Raw PNGs, Watch size labels, locale metadata, partial reruns, and retained `.xcresult` bundles work through both CLI and MCP. Rendering and uploads remain separate operations.
+
 ## Commands
 
 | Command | Purpose |
@@ -132,7 +165,7 @@ Use `screenshot_appearances: {Home: dark}` to restrict an individual screenshot 
 | `list` | List available simulators and their screen sizes |
 | `init` | Generate capture configuration |
 | `setup` | Generate an editable XCUITest screenshot harness |
-| `prepare` | Boot configured simulators, set status bars, optionally install `--app MyApp.app` |
+| `prepare` | Boot simulators, set supported status bars, prepare companion apps, or install `--app MyApp.app` |
 | `capture` | Run tests and collect raw screenshots |
 | `collect` | Extract named attachments from an existing `.xcresult` |
 | `check` | Check source for capture problems and device assumptions |
@@ -179,7 +212,7 @@ This saves an exact, private-permission `storescreens.yml.v3-backup` before writ
 
 Configure `storescreens-mcp` as a stdio server; see [mcp.json.example](mcp.json.example). The server exposes only `capture`, `get_capture_status`, `get_capture_result`, `check`, `list_simulators`, `list_screenshots`, `get_screenshot`, `take_screenshot`, `read_config`, and `write_config`. Capture returns a task ID and streams progress through status polling. It uses the same capture implementation as the CLI.
 
-The MCP `capture` tool accepts `locales`, `appearances`, `only`, `no_parallel`, and `retries`, as well as configuration and DerivedData paths. Narrowed MCP runs preserve the other images and manifest entries just like the CLI. See the [complete capture and Koubou example](examples/README.md) for a standard-library MCP client, partial reruns, framing configurations, and an ASC CLI upload preview.
+The MCP `capture` tool accepts `locales`, `appearances`, `only`, `no_parallel`, and `retries`, as well as configuration and DerivedData paths. Use `list_simulators` with `include_watch: true` to discover Watch devices. Narrowed MCP runs preserve the other images and manifest entries just like the CLI. See the [complete capture and Koubou example](examples/README.md) for a standard-library MCP client, partial reruns, framing configurations, and an ASC CLI upload preview.
 
 ## Development
 
@@ -188,9 +221,14 @@ swift test
 bash scripts/test-mcp.sh
 # Requires xcodegen and an iOS 27 runtime; creates and removes its own simulator.
 python3 scripts/smoke-capture.py
+# Requires xcodegen plus watchOS and iOS runtimes.
+python3 scripts/smoke-watch-capture.py --sanity
+python3 scripts/smoke-watch-capture.py
 ```
 
 The simulator smoke test navigates a fixture app, captures two authentic screens, verifies partial reruns, then saves a screenshot and deliberately fails a test. It requires a nonzero capture exit and byte-identical previous output, verifies recovery, and collects the original images from a preserved `.xcresult`. It keeps its temporary artifacts for inspection.
+
+The Watch smoke test generates watch-only and companion-app fixtures. It checks configuration and harness generation, CLI and MCP capture, pairing, Watch dimensions, attachment collection, partial reruns, and preservation of previous output after a failed test. `--sanity` runs one watch-only capture first. The script removes only its own simulators and retains its artifacts.
 
 Banner assets are generated from the original app icon in `assets/logo.png` and bundled OFL-licensed IBM Plex Sans fonts. Run `python3 scripts/generate-banner.py` after changing the tagline or artwork; it requires `fonttools[woff]`, `cairosvg`, and the Cairo library. The generator produces the README banner, an SVG source, and the social image.
 

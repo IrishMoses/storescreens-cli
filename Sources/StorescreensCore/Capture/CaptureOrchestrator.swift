@@ -65,6 +65,8 @@ package struct CaptureOrchestrator: Sendable {
         try ConfigLoader.validate(config)
         guard config.project != nil || config.workspace != nil else { throw CLIError.noProjectOrWorkspace }
         guard !config.devices.isEmpty else { throw CLIError.noDevicesConfigured }
+        let resolvedDevices = try await SimulatorManager().resolveDevices(config.devices)
+        try Self.configurePlatform(&config, devices: resolvedDevices)
         guard retries >= 0 else { throw CLIError.configInvalid(reason: "retries must be nonnegative") }
         if mode == .simple, !(config.screenshotAppearances?.isEmpty ?? true) {
             throw CLIError.configInvalid(reason: "screenshot_appearances requires XCUITest capture")
@@ -108,6 +110,7 @@ package struct CaptureOrchestrator: Sendable {
         case .xctest:
             return try await captureXCTest(
                 config: config,
+                resolvedDevices: resolvedDevices,
                 xcresult: xcresult,
                 noParallel: noParallel,
                 retries: retries,
@@ -117,6 +120,7 @@ package struct CaptureOrchestrator: Sendable {
         case .simple:
             return try await captureSimple(
                 config: config,
+                resolvedDevices: resolvedDevices,
                 keepAlive: keepAlive,
                 retries: retries,
                 scope: scope,
@@ -126,6 +130,18 @@ package struct CaptureOrchestrator: Sendable {
     }
 
     // MARK: - Static helpers
+
+    package static func configurePlatform(_ config: inout CaptureConfig, devices: [ResolvedDevice]) throws {
+        guard devices.contains(where: \.isWatchOS) else { return }
+        guard devices.allSatisfy(\.isWatchOS) else {
+            throw CLIError.configInvalid(reason: "Capture watchOS and iOS/macOS schemes in separate configurations. Use companion to prepare a Watch app's iPhone without capturing it.")
+        }
+        guard (config.appearances ?? ["dark"]).contains("dark"),
+              !(config.screenshotAppearances ?? [:]).values.contains("light") else {
+            throw CLIError.configInvalid(reason: "watchOS captures use dark appearance. Remove light-only appearance selections.")
+        }
+        config.appearances = ["dark"]
+    }
 
     package static var screenshotsCacheDir: URL {
         URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".storescreens-cache")
@@ -193,6 +209,7 @@ package struct CaptureOrchestrator: Sendable {
 
     private func captureXCTest(
         config: CaptureConfig,
+        resolvedDevices: [ResolvedDevice],
         xcresult: Bool,
         noParallel: Bool,
         retries: Int,
@@ -247,7 +264,6 @@ package struct CaptureOrchestrator: Sendable {
 
         // 1. Resolve devices
         await eventHandler(.phase("Resolving devices..."))
-        let resolvedDevices = try await simulatorManager.resolveDevices(config.devices)
         for device in resolvedDevices {
             await eventHandler(.deviceLog(device: device.simulatorName, message: "\(device.simulatorName) -> \(device.appStoreSize.displayName)"))
         }
@@ -265,7 +281,8 @@ package struct CaptureOrchestrator: Sendable {
         let detector = ProjectDetector()
         if !nonMacDevices.isEmpty,
            let supportedFamilies = await detector.detectTargetedDeviceFamilies(
-            project: config.project, workspace: config.workspace, scheme: config.scheme
+            project: config.project, workspace: config.workspace, scheme: config.scheme,
+            platform: nonMacDevices.first?.platform
         ) {
             var unsupportedDevices: [String] = []
             for device in nonMacDevices {
@@ -277,7 +294,7 @@ package struct CaptureOrchestrator: Sendable {
                         .joined(separator: "+")
                     let message = "\(device.simulatorName): app only supports \(supportedNames) " +
                         "(TARGETED_DEVICE_FAMILY=\(supportedFamilies.map(String.init).joined(separator: ","))). " +
-                        "xcodebuild will use an iPhone clone and capture 0 screenshots for this \(familyName)."
+                        "Select a scheme that supports this \(familyName) before capturing."
                     await eventHandler(.preflightFinding(
                         rule: "unsupported-destination",
                         device: device.simulatorName,
@@ -294,9 +311,12 @@ package struct CaptureOrchestrator: Sendable {
             }
         }
 
-        // Clean up stale xcodebuild simulator clones from previous runs (iOS/iPadOS only)
+        // Clean up stale simulator clones for the capture devices and companions.
         for device in resolvedDevices where !device.isMacOS {
             try? await simulatorManager.deleteClonesOf(name: device.simulatorName, keepUDID: device.udid)
+            if let companion = device.companion {
+                try? await simulatorManager.deleteClonesOf(name: companion.name, keepUDID: companion.udid)
+            }
         }
 
         let outputDir = (config.outputDir as NSString).expandingTildeInPath
@@ -324,6 +344,11 @@ package struct CaptureOrchestrator: Sendable {
 
         // Determine appearances to iterate (default: both light and dark)
         let configuredAppearances = CaptureSelection.appearances(config: config)
+        // Activating another Watch pair can disconnect a running companion test.
+        let runSequentially = noParallel || resolvedDevices.contains { $0.companion != nil }
+        if !noParallel && runSequentially {
+            await eventHandler(.phase("Running paired Watch devices sequentially..."))
+        }
 
         var manifestDevices: [CaptureManifest.DeviceCapture] = []
 
@@ -341,7 +366,7 @@ package struct CaptureOrchestrator: Sendable {
 
                 let (testLanguage, testRegion) = Self.parseLocale(currentLocale)
 
-                if noParallel {
+                if runSequentially {
                     // Sequential: one device at a time, outer appearance loop
                     for currentAppearance in configuredAppearances {
                         let selected = CaptureSelection.screenshots(config: config, appearance: currentAppearance)
@@ -437,7 +462,7 @@ package struct CaptureOrchestrator: Sendable {
             let firstDeviceDerivedData = resolvedDevices.first.map {
                 baseDerivedDataURL.appendingPathComponent("DerivedData-\($0.udid)").path
             } ?? derivedData
-            let builtAppPath = try? await buildRunner.findAppBundle(in: firstDeviceDerivedData)
+            let builtAppPath = try? await buildRunner.findAppBundle(in: firstDeviceDerivedData, platform: resolvedDevices[0].platform)
             let displayName = builtAppPath.flatMap { detectDisplayName(appPath: $0) }
 
             // Write manifest
@@ -529,16 +554,24 @@ package struct CaptureOrchestrator: Sendable {
         // macOS tests run natively - skip all simulator setup
         if !device.isMacOS {
             await logLine("Booting simulator for configuration...")
-            try await simulatorManager.boot(device.udid)
-            await simulatorManager.waitUntilBooted(device.udid)
+            try await simulatorManager.bootForCapture(device)
+            if device.companionScheme != nil {
+                await logLine("Preparing iPhone companion app...")
+                try await CompanionAppPreparer().prepare(
+                    device: device, config: config,
+                    derivedDataPath: (derivedDataPath as NSString).appendingPathComponent("Companion")
+                )
+            }
 
-            try await simulatorManager.setAppearance(appearance, udid: device.udid)
-            await logLine("Set appearance: \(appearance)")
+            if device.platform.supportsSimulatorAppearance {
+                try await simulatorManager.setAppearance(appearance, udid: device.udid)
+                await logLine("Set appearance: \(appearance)")
+            }
 
             // Applied to the base device here, and re-applied to each xcodebuild
             // clone by the StatusBarKeeper below - a clone does not inherit the
             // base's status bar override.
-            if let statusBarArgs = StatusBarKeeper.arguments(for: config) {
+            if device.platform.supportsStatusBarOverride, let statusBarArgs = StatusBarKeeper.arguments(for: config) {
                 try await simulatorManager.overrideStatusBar(device.udid, arguments: statusBarArgs)
                 await logLine("Status bar configured")
             }
@@ -648,7 +681,7 @@ package struct CaptureOrchestrator: Sendable {
         try await StatusBarKeeper().maintaining(
             baseName: device.simulatorName,
             baseUDID: device.udid,
-            arguments: device.isMacOS ? nil : StatusBarKeeper.arguments(for: config),
+            arguments: device.platform.supportsStatusBarOverride ? StatusBarKeeper.arguments(for: config) : nil,
             manager: simulatorManager,
             log: logLine
         ) {
@@ -657,7 +690,7 @@ package struct CaptureOrchestrator: Sendable {
             if config.warmupRun == true {
                 await logLine("Warmup run starting...")
                 if !device.isMacOS {
-                    try? await simulatorManager.settleClones(name: device.simulatorName, keepUDID: device.udid)
+                    try? await simulatorManager.settleClones(for: device)
                 }
                 try? FileManager.default.removeItem(atPath: resultPath)
                 _ = try? await buildRunner.test(
@@ -672,7 +705,7 @@ package struct CaptureOrchestrator: Sendable {
                     testSelectors: testSelectors,
                     testLanguage: testLanguage,
                     testRegion: testRegion,
-                    isMacOS: device.isMacOS,
+                    platform: device.platform,
                     liveLineHandler: liveHandler
                 )
                 // Discard warmup screenshots so the real run starts with a clean slate
@@ -692,7 +725,7 @@ package struct CaptureOrchestrator: Sendable {
                 // This also makes --retries actually recover from that busy state.
                 if !device.isMacOS {
                     await logLine("Clearing leftover simulator clones...")
-                    try? await simulatorManager.settleClones(name: device.simulatorName, keepUDID: device.udid)
+                    try? await simulatorManager.settleClones(for: device)
                 }
                 try? FileManager.default.removeItem(atPath: resultPath)
                 // Never carry images from a failed attempt into a later retry.
@@ -710,7 +743,7 @@ package struct CaptureOrchestrator: Sendable {
                     testSelectors: testSelectors,
                     testLanguage: testLanguage,
                     testRegion: testRegion,
-                    isMacOS: device.isMacOS,
+                    platform: device.platform,
                     liveLineHandler: liveHandler
                 )
             }
@@ -894,6 +927,7 @@ package struct CaptureOrchestrator: Sendable {
 
     private func captureSimple(
         config: CaptureConfig,
+        resolvedDevices: [ResolvedDevice],
         keepAlive: Bool,
         retries: Int,
         scope: CaptureScope,
@@ -925,7 +959,6 @@ package struct CaptureOrchestrator: Sendable {
 
         // 1. Resolve devices
         await eventHandler(.phase("Resolving devices..."))
-        let resolvedDevices = try await simulatorManager.resolveDevices(config.devices)
         for device in resolvedDevices {
             await eventHandler(.deviceLog(device: device.simulatorName, message: "\(device.simulatorName) -> \(device.appStoreSize.displayName)"))
         }
@@ -961,7 +994,8 @@ package struct CaptureOrchestrator: Sendable {
             workspace: config.workspace,
             scheme: config.scheme,
             destinationUDID: firstDevice.udid,
-            derivedDataPath: derivedData
+            derivedDataPath: derivedData,
+            platform: firstDevice.platform
         )
         await eventHandler(.phase("Build succeeded"))
 
@@ -994,17 +1028,23 @@ package struct CaptureOrchestrator: Sendable {
                         }
 
                         try await withRetries(retries, label: devName, logLine: retryLogLine) {
-                            try await simulatorManager.boot(device.udid)
+                            try await simulatorManager.bootForCapture(device)
+                            try await CompanionAppPreparer().prepare(
+                                device: device, config: config,
+                                derivedDataPath: (derivedData as NSString).appendingPathComponent("Companion")
+                            )
 
                             if let loc = currentLocale {
                                 try await simulatorManager.setLocale(loc, udid: device.udid)
                             }
 
-                            try await simulatorManager.setAppearance(currentAppearance, udid: device.udid)
+                            if device.platform.supportsSimulatorAppearance {
+                                try await simulatorManager.setAppearance(currentAppearance, udid: device.udid)
+                            }
 
                             // Simple mode runs the app on the base device itself,
                             // so there is no clone to chase.
-                            if let statusBarArgs = StatusBarKeeper.arguments(for: config) {
+                            if device.platform.supportsStatusBarOverride, let statusBarArgs = StatusBarKeeper.arguments(for: config) {
                                 try await simulatorManager.overrideStatusBar(device.udid, arguments: statusBarArgs)
                             }
 
@@ -1137,6 +1177,7 @@ package struct CaptureOrchestrator: Sendable {
         let runnerName = "\(testTarget)-Runner.app"
         let searchDirs = [
             (productsDir as NSString).appendingPathComponent("Debug-iphonesimulator"),
+            (productsDir as NSString).appendingPathComponent("Debug-watchsimulator"),
             (productsDir as NSString).appendingPathComponent("Debug"),
         ]
         let runnerPath = searchDirs

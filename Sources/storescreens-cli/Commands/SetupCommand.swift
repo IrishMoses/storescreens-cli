@@ -14,6 +14,9 @@ struct SetupCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Xcode project or workspace path.")
     var project: String?
 
+    @Option(name: .long, help: "Scheme to configure; defaults to the scheme in storescreens.yml.")
+    var scheme: String?
+
     @Flag(name: .long, help: "Skip interactive prompts and use defaults.")
     var nonInteractive: Bool = false
 
@@ -47,29 +50,32 @@ struct SetupCommand: AsyncParsableCommand {
         }
 
         // 2. Detect scheme
-        let scheme = await detector.detectScheme(
-            project: projectPath, workspace: workspacePath
-        ) ?? "MyApp"
+        let settings = try? ConfigLoader().load(from: "storescreens.yml")
+        let scheme: String
+        if let selected = self.scheme ?? settings?.scheme { scheme = selected }
+        else { scheme = await detector.detectScheme(project: projectPath, workspace: workspacePath) ?? "MyApp" }
         logger.log("Detected scheme: \(scheme)", level: .success)
+        let platforms = await detector.detectSupportedPlatforms(project: projectPath, workspace: workspacePath, scheme: scheme)
+        let platform = CapturePlatform.detect(in: platforms) ?? .iOS
 
         // 3. Detect deployment target
         let deploymentTarget = await detector.detectDeploymentTarget(
-            project: projectPath, workspace: workspacePath, scheme: scheme
+            project: projectPath, workspace: workspacePath, scheme: scheme, platform: platform
         )
         if let target = deploymentTarget {
-            logger.log("Deployment target: iOS \(target)", level: .success)
+            logger.log("Deployment target: \(platform.rawValue) \(target)", level: .success)
         }
 
         // 4. Find UI test target
         logger.header("UI Test Target")
         let uiTestTargets = await detector.findUITestTargets(
-            project: projectPath, workspace: workspacePath
+            project: projectPath, workspace: workspacePath, scheme: scheme, platform: platform
         )
 
         let testTargetName: String
         let testTargetDir: String
 
-        if let first = uiTestTargets.first {
+        if let first = settings?.testTarget ?? uiTestTargets.first {
             testTargetName = first
             testTargetDir = first
             logger.log("Found UI test target: \(first)", level: .success)
@@ -79,7 +85,7 @@ struct SetupCommand: AsyncParsableCommand {
             logger.log("No UI test target found.", level: .warning)
             logger.log("Create one in Xcode:", level: .info)
             logger.log("  1. Open your project in Xcode", level: .info)
-            logger.log("  2. File > New > Target > UI Testing Bundle", level: .info)
+            logger.log("  2. File > New > Target > \(platform.rawValue) UI Testing Bundle", level: .info)
             logger.log("  3. Name it \"\(suggestedName)\"", level: .info)
             logger.log("  4. Re-run: storescreens setup", level: .info)
 
@@ -222,46 +228,28 @@ struct SetupCommand: AsyncParsableCommand {
             logger.log("No storescreens.yml found. Run 'storescreens init' first, then re-run setup.", level: .warning)
         }
 
-        // 8. Check simulator runtimes
+        // 8. Check the selected platform's simulator runtime.
         logger.header("Simulator Runtimes")
-        let runtimes = await detector.listInstalledRuntimes()
-        let availableRuntimes = runtimes.filter(\.isAvailable)
-
-        if availableRuntimes.isEmpty {
-            logger.log("No iOS simulator runtimes installed.", level: .error)
-            logger.log("Install via: Xcode > Settings > Platforms", level: .info)
+        if platform == .macOS {
+            logger.log("macOS tests run on the host Mac.", level: .success)
         } else {
-            for runtime in availableRuntimes {
-                logger.log("iOS \(runtime.version) installed", level: .success)
-            }
-
-            // Check if deployment target is satisfied
-            if let target = deploymentTarget {
-                let targetParts = target.split(separator: ".").compactMap { Int($0) }
-                let targetMajor = targetParts.first ?? 0
-
-                let hasCompatible = availableRuntimes.contains { runtime in
-                    let runtimeParts = runtime.version.split(separator: ".").compactMap { Int($0) }
-                    let runtimeMajor = runtimeParts.first ?? 0
-                    return runtimeMajor >= targetMajor
+            let runtimes = await detector.listInstalledRuntimes(platform: platform).filter(\.isAvailable)
+            if runtimes.isEmpty {
+                logger.log("No \(platform.rawValue) simulator runtimes installed.", level: .error)
+                logger.log("Install via: Xcode > Settings > Platforms", level: .info)
+            } else {
+                for runtime in runtimes { logger.log("\(platform.rawValue) \(runtime.version) installed", level: .success) }
+                let manager = SimulatorManager()
+                let devices = try await manager.listAvailableDevices(minimumRuntime: deploymentTarget, platform: platform)
+                if devices.isEmpty {
+                    logger.log("No compatible \(platform.rawValue) simulator is available.", level: .warning)
                 }
-
-                if !hasCompatible {
-                    logger.log(
-                        "No runtime >= iOS \(target). Install via: Xcode > Settings > Platforms",
-                        level: .error
-                    )
+                if platform == .iOS {
+                    var sizes: [String: AppStoreScreenSize] = [:]
+                    for device in devices { sizes[device.udid] = try await manager.appStoreSize(for: device) }
+                    detector.warnMissingRequiredSizes(sizeMap: sizes, logger: logger)
                 }
             }
-
-            // Check required App Store sizes against compatible simulators
-            let manager = SimulatorManager()
-            let devices = try await manager.listAvailableDevices(minimumRuntime: deploymentTarget)
-            var sizeMap: [String: AppStoreScreenSize] = [:]
-            for device in devices {
-                sizeMap[device.udid] = try await manager.appStoreSize(for: device)
-            }
-            detector.warnMissingRequiredSizes(sizeMap: sizeMap, logger: logger)
         }
 
         // Done

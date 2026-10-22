@@ -29,6 +29,8 @@ Use your project's actual scheme, target, class, and screenshot names. `storescr
 
 Keep the capture configuration and rendering templates in source control. Ignore generated raw images, result bundles, reports, and DerivedData according to your project's artifact policy.
 
+For Apple Watch, use the Watch app's scheme and UI-test target, choose a Watch simulator, and set `appearances: [dark]`. Add `devices[].companion` when the Watch app requires an iPhone. Keep Watch and phone captures in separate configurations; see the [Watch configuration](../README.md#apple-watch). The MCP client and partial-capture options below work with either platform. Run `python3 scripts/smoke-watch-capture.py` for the Watch fixtures.
+
 ## Start a capture and retrieve its result
 
 From the StoreScreens repository, run the standard-library MCP client against your application's directory:

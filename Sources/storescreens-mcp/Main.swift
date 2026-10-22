@@ -204,12 +204,17 @@ struct StorescreensMCP {
         Tool(
             name: "list_simulators",
             description: """
-            List available iOS simulators that can be used for App Store screenshot capture. \
+            List available iOS simulators, and watchOS simulators when include_watch is true. \
             Grouped by App Store slot. Use these names in the devices section of storescreens.yml.
             """,
             inputSchema: .object([
                 "type": .string("object"),
-                "properties": .object([:]),
+                "properties": .object([
+                    "include_watch": .object([
+                        "type": .string("boolean"),
+                        "description": .string("Include Apple Watch simulators (default: false)."),
+                    ]),
+                ]),
             ])
         ),
         Tool(
@@ -245,7 +250,7 @@ struct StorescreensMCP {
         Tool(
             name: "take_screenshot",
             description: """
-            Capture the current screen of a running iOS simulator and return the image inline. \
+            Capture the current screen of a running iOS or watchOS simulator and return the image inline. \
             Use this for quick visual checks during UI development - not for full App Store screenshot capture. \
             If no simulator or udid is given, uses the first booted simulator.
             """,
@@ -298,7 +303,7 @@ struct StorescreensMCP {
                     "workspace": .object(["type": .string("string"), "description": .string(".xcworkspace path")]),
                     "devices": .object([
                         "type": .string("array"),
-                        "description": .string("Array of device objects: {simulator: \"iPhone 18 Pro Max\"}, optionally with platform (\"macOS\" for a native Mac target) and tests (per-device test selectors). Replaces the existing devices list."),
+                        "description": .string("Array of device objects with simulator, optional platform (iOS, watchOS, macOS), companion (an iPhone simulator for watchOS), companion_scheme (its iOS app scheme), and tests (per-device test selectors). Replaces the existing devices list."),
                     ]),
                     "output_dir": .object(["type": .string("string"), "description": .string("Output directory")]),
                     "test_target": .object(["type": .string("string"), "description": .string("UI test target name")]),
@@ -325,7 +330,7 @@ struct StorescreensMCP {
             case "get_capture_status":  return await handleGetCaptureStatus(params)
             case "get_capture_result":  return try await handleGetCaptureResult(params)
             case "check":             return try await handleCheck(params)
-            case "list_simulators":   return try await handleListSimulators()
+            case "list_simulators":   return try await handleListSimulators(params)
             case "list_screenshots":  return try handleListScreenshots(params)
             case "get_screenshot":    return try handleGetScreenshot(params)
             case "take_screenshot":   return try await handleTakeScreenshot(params)
@@ -760,9 +765,10 @@ struct StorescreensMCP {
 
     // MARK: - list_simulators
 
-    static func handleListSimulators() async throws -> CallTool.Result {
+    static func handleListSimulators(_ params: CallTool.Parameters) async throws -> CallTool.Result {
         let manager = SimulatorManager()
         let devices = try await manager.listAvailableDevices()
+        let includeWatch = params.arguments?["include_watch"]?.boolValue ?? false
 
         struct DeviceOutput: Encodable {
             let name: String
@@ -770,11 +776,11 @@ struct StorescreensMCP {
             let udid: String
         }
 
-        // Group by App Store size, keep only available iPhone/iPad devices
+        // Group by App Store size, with Watch devices explicitly requested.
         var bySize: [String: [DeviceOutput]] = [:]
         for device in devices where device.isAvailable {
             guard let size = try? await manager.appStoreSize(for: device),
-                  size.isIPhone || size.isIPad else { continue }
+                  size.isIPhone || size.isIPad || (includeWatch && size.isAppleWatch) else { continue }
             let entry = DeviceOutput(name: device.name, appStoreSize: size.displayName, udid: device.udid)
             bySize[size.displayName, default: []].append(entry)
         }
@@ -940,6 +946,8 @@ struct StorescreensMCP {
                     simulator: name,
                     size: object["size"]?.stringValue,
                     platform: object["platform"]?.stringValue,
+                    companion: object["companion"]?.stringValue,
+                    companionScheme: object["companion_scheme"]?.stringValue,
                     tests: object["tests"]?.arrayValue?.compactMap { $0.stringValue }
                 )
             }

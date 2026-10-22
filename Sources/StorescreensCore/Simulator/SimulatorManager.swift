@@ -65,7 +65,7 @@ package actor SimulatorManager {
         )
     }
 
-    package func listAvailableDevices(minimumRuntime: String? = nil) async throws -> [SimulatorDevice] {
+    package func listAvailableDevices(minimumRuntime: String? = nil, platform: CapturePlatform? = nil) async throws -> [SimulatorDevice] {
         let result = try await shell.xcrun("simctl", arguments: ["list", "devices", "available", "--json"])
         guard result.succeeded else {
             throw CLIError.xcrunFailed(result.stderr)
@@ -76,13 +76,14 @@ package actor SimulatorManager {
 
         // Filter runtimes to only those >= the project's deployment target
         let filteredRuntimes: [String: [SimulatorDevice]]
-        if let minimum = minimumRuntime, let minVersion = parseRuntimeVersion(minimum) {
-            filteredRuntimes = decoded.devices.filter { key, _ in
-                guard let version = parseRuntimeVersion(fromIdentifier: key) else { return false }
+        filteredRuntimes = decoded.devices.filter { key, _ in
+            let selectedPlatform = platform ?? (minimumRuntime == nil ? nil : .iOS)
+            if let selectedPlatform, !key.contains(".\(selectedPlatform.rawValue)-") { return false }
+            if let minimum = minimumRuntime, let minVersion = parseRuntimeVersion(minimum) {
+                guard let version = parseRuntimeVersion(fromIdentifier: key, platform: selectedPlatform ?? .iOS) else { return false }
                 return version >= minVersion
             }
-        } else {
-            filteredRuntimes = decoded.devices
+            return true
         }
 
         let allDevices = filteredRuntimes
@@ -112,13 +113,13 @@ package actor SimulatorManager {
 
     /// Extract the iOS version from a runtime identifier like
     /// "com.apple.CoreSimulator.SimRuntime.iOS-18-0" → (18, 0)
-    private func parseRuntimeVersion(fromIdentifier identifier: String) -> (Int, Int)? {
+    private func parseRuntimeVersion(fromIdentifier identifier: String, platform: CapturePlatform = .iOS) -> (Int, Int)? {
         // Match "iOS-XX-Y" at the end of the identifier
-        guard let range = identifier.range(of: #"iOS-(\d+)-(\d+)"#, options: .regularExpression) else {
+        guard let range = identifier.range(of: "\(platform.rawValue)-(\\d+)-(\\d+)", options: .regularExpression) else {
             return nil
         }
         let matched = String(identifier[range])
-        let parts = matched.replacingOccurrences(of: "iOS-", with: "").split(separator: "-")
+        let parts = matched.replacingOccurrences(of: "\(platform.rawValue)-", with: "").split(separator: "-")
         guard let major = Int(parts[0]) else { return nil }
         let minor = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
         return (major, minor)
@@ -161,12 +162,30 @@ package actor SimulatorManager {
                     throw CLIError.noMatchingDeviceSize(simulatorName: config.simulator)
                 }
 
+                let platform: CapturePlatform = size.isAppleWatch ? .watchOS : .iOS
+                if let configured = config.platform, CapturePlatform(configValue: configured) != platform {
+                    throw CLIError.configInvalid(reason: "\(config.simulator) is a \(platform.rawValue) simulator, not \(configured)")
+                }
+                var companion: SimulatorDevice?
+                if let name = config.companion {
+                    guard platform == .watchOS else {
+                        throw CLIError.configInvalid(reason: "companion is only supported for watchOS devices")
+                    }
+                    guard let phone = allDevices.first(where: { $0.name == name }),
+                          profiles[phone.deviceTypeIdentifier]?.productFamily == 1 else {
+                        throw CLIError.configInvalid(reason: "Companion '\(name)' must be an available iPhone simulator")
+                    }
+                    companion = phone
+                }
                 resolved.append(ResolvedDevice(
                     simulatorName: device.name,
                     udid: device.udid,
                     deviceTypeIdentifier: device.deviceTypeIdentifier,
                     appStoreSize: size,
                     isMacOS: false,
+                    platform: platform,
+                    companion: companion,
+                    companionScheme: config.companionScheme,
                     tests: config.tests
                 ))
             }
@@ -186,6 +205,49 @@ package actor SimulatorManager {
         }
 
         return resolved
+    }
+
+    /// Boot the configured devices without re-pairing a Watch owned by another pair.
+    package func bootForCapture(_ device: ResolvedDevice) async throws {
+        guard !device.isMacOS else { return }
+        if let companion = device.companion {
+            let result = try await shell.xcrun("simctl", arguments: ["list", "pairs", "--json"])
+            guard result.succeeded else { throw CLIError.xcrunFailed(result.stderr) }
+            let pairs = try JSONDecoder().decode(SimulatorPairList.self, from: Data(result.stdout.utf8)).pairs
+            let existing = try Self.matchingPair(watch: device.udid, phone: companion.udid, pairs: pairs)
+            let pairID: String
+            if let existing { pairID = existing }
+            else {
+                let created = try await shell.xcrun("simctl", arguments: ["pair", device.udid, companion.udid])
+                guard created.succeeded else { throw CLIError.xcrunFailed(created.stderr) }
+                pairID = created.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let activated = try await shell.xcrun("simctl", arguments: ["pair_activate", pairID])
+            // `pair` activates a new pair on recent runtimes, and preparation
+            // may also be repeated for an already active pair.
+            guard activated.succeeded || activated.stderr.contains("This pair is already active.") else {
+                throw CLIError.xcrunFailed(activated.stderr)
+            }
+            try await boot(companion.udid)
+            await waitUntilBooted(companion.udid)
+        }
+        try await boot(device.udid)
+        await waitUntilBooted(device.udid)
+    }
+
+    package static func matchingPair(watch: String, phone: String, pairs: [String: SimulatorPair]) throws -> String? {
+        guard let existing = pairs.first(where: { $0.value.watch.udid == watch }) else { return nil }
+        guard existing.value.phone.udid == phone else {
+            throw CLIError.configInvalid(reason: "The Watch is already paired with another iPhone. Use that companion or choose an unpaired Watch; existing pairs are not replaced.")
+        }
+        return existing.key
+    }
+
+    package func settleClones(for device: ResolvedDevice) async throws {
+        try await settleClones(name: device.simulatorName, keepUDID: device.udid)
+        if let companion = device.companion {
+            try await settleClones(name: companion.name, keepUDID: companion.udid)
+        }
     }
 
     /// Map a macOS device config name to its App Store screenshot size.

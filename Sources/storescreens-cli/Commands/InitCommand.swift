@@ -11,6 +11,9 @@ struct InitCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Xcode project or workspace to detect scheme from.")
     var project: String?
 
+    @Option(name: .long, help: "Scheme to configure, such as a watchOS app's scheme.")
+    var scheme: String?
+
     @Flag(name: .long, help: "Overwrite existing config file.")
     var force: Bool = false
 
@@ -39,23 +42,23 @@ struct InitCommand: AsyncParsableCommand {
         }
 
         // Detect scheme
-        let detectedScheme = await detector.detectScheme(
-            project: projectPath, workspace: workspacePath
-        ) ?? "MyApp"
+        let detectedScheme: String
+        if let scheme { detectedScheme = scheme }
+        else { detectedScheme = await detector.detectScheme(project: projectPath, workspace: workspacePath) ?? "MyApp" }
         logger.log("Detected scheme: \(detectedScheme)", level: .success)
 
-        // Check platform - must target iOS or macOS
+        // Select the scheme's app platform, excluding companion dependencies.
         let platforms = await detector.detectSupportedPlatforms(
             project: projectPath, workspace: workspacePath, scheme: detectedScheme
         )
         let hasIOS = platforms.isEmpty || platforms.contains(where: { $0.contains("iphone") })
         let hasMacOS = platforms.contains(where: { $0.contains("macos") || $0.contains("macosx") })
-        if !hasIOS && !hasMacOS {
-            logger.log("This project does not target iOS or macOS.", level: .error)
-            logger.log("storescreens requires an iOS, macOS, or universal project.", level: .info)
+        let hasWatchOS = platforms.contains(where: { $0.contains("watch") })
+        if !hasIOS && !hasMacOS && !hasWatchOS {
+            logger.log("This project does not target iOS, watchOS, or macOS.", level: .error)
             return
         }
-        if hasMacOS && !hasIOS {
+        if hasMacOS && !hasIOS && !hasWatchOS {
             logger.log("Detected macOS-only project", level: .success)
         }
 
@@ -97,6 +100,20 @@ struct InitCommand: AsyncParsableCommand {
             logger.log("Added Mac 2560x1600 (13\" Retina) for Mac App Store", level: .success)
         }
 
+        if hasWatchOS {
+            let manager = SimulatorManager()
+            let target = await detector.detectDeploymentTarget(project: projectPath, workspace: workspacePath, scheme: detectedScheme, platform: .watchOS)
+            let watches = try await manager.listAvailableDevices(minimumRuntime: target, platform: .watchOS)
+            var sizes: [String: AppStoreScreenSize] = [:]
+            for watch in watches { sizes[watch.udid] = try await manager.appStoreSize(for: watch) }
+            if let watch = watches.max(by: { (sizes[$0.udid]?.width ?? 0) < (sizes[$1.udid]?.width ?? 0) }) {
+                deviceConfigs.append(DeviceConfig(simulator: watch.name, platform: "watchOS"))
+            }
+            guard !deviceConfigs.isEmpty else {
+                throw CLIError.configInvalid(reason: "No compatible watchOS simulator is installed")
+            }
+        }
+
         logger.log("Selected \(deviceConfigs.count) default device(s)", level: .success)
 
         // Build config
@@ -131,6 +148,9 @@ struct InitCommand: AsyncParsableCommand {
             if let platform = device.platform {
                 yaml += "    platform: \(platform)\n"
             }
+            if device.platform == "watchOS" {
+                yaml += "    # companion: iPhone 18 Pro\n    # companion_scheme: MyPhoneApp\n"
+            }
         }
 
         yaml += "\n# Optional: capture in multiple locales\n"
@@ -147,10 +167,11 @@ struct InitCommand: AsyncParsableCommand {
         yaml += "#   en-IN: in-en\n"
         yaml += "#   hi: in-hi\n\n"
 
-        yaml += "# Appearances to capture (default: both light and dark)\n"
-        yaml += "# appearances:\n"
-        yaml += "#   - light\n"
-        yaml += "#   - dark\n\n"
+        if hasWatchOS {
+            yaml += "# watchOS uses dark appearance.\nappearances: [dark]\n\n"
+        } else {
+            yaml += "# Appearances to capture (default: both light and dark)\n# appearances:\n#   - light\n#   - dark\n\n"
+        }
 
         yaml += "# Screenshot collection order. Drives\n"
         yaml += "# HTML preview gallery order, and the mtime stamp on captured PNGs so\n"

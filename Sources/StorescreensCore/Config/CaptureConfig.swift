@@ -109,9 +109,14 @@ package struct CaptureConfig: Codable {
 package struct DeviceConfig: Codable, Sendable {
     package var simulator: String
     package var size: String?
-    /// Platform for this device: "iOS" (default) or "macOS".
+    /// Platform for this device: "iOS", "watchOS", or "macOS".
+    /// Simulator platforms are inferred from the device when omitted.
     /// When "macOS", tests run natively on the Mac instead of in a simulator.
     package var platform: String?
+    /// iPhone simulator to pair with a watchOS device that needs a companion.
+    package var companion: String?
+    /// Optional iOS scheme to build, install, and launch on the companion.
+    package var companionScheme: String?
     /// Per-device test selection. When non-nil, xcodebuild runs only these
     /// tests on this device, overriding the top-level `test_class` filter.
     ///
@@ -131,11 +136,15 @@ package struct DeviceConfig: Codable, Sendable {
         simulator: String,
         size: String? = nil,
         platform: String? = nil,
+        companion: String? = nil,
+        companionScheme: String? = nil,
         tests: [String]? = nil
     ) {
         self.simulator = simulator
         self.size = size
         self.platform = platform
+        self.companion = companion
+        self.companionScheme = companionScheme
         self.tests = tests
     }
 
@@ -144,7 +153,8 @@ package struct DeviceConfig: Codable, Sendable {
     }
 
     package enum CodingKeys: String, CodingKey {
-        case simulator, size, platform, tests
+        case simulator, size, platform, companion, tests
+        case companionScheme = "companion_scheme"
     }
 }
 

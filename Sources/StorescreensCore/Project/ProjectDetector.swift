@@ -40,37 +40,12 @@ package struct ProjectDetector {
         return nil
     }
 
-    /// Query xcodebuild for the project's IPHONEOS_DEPLOYMENT_TARGET.
+    /// Read the deployment target for the selected platform and application.
     package func detectDeploymentTarget(
-        project: String?, workspace: String?, scheme: String
+        project: String?, workspace: String?, scheme: String, platform: CapturePlatform = .iOS
     ) async -> String? {
-        var args = ["-showBuildSettings", "-scheme", scheme, "-json"]
-        if let ws = workspace {
-            args += ["-workspace", ws]
-        } else if let proj = project {
-            args += ["-project", proj]
-        } else {
-            return nil
-        }
-
-        guard let result = try? await shell.xcodebuild(arguments: args),
-              result.succeeded else {
-            return nil
-        }
-
-        // Parse JSON array of build settings
-        guard let data = result.stdout.data(using: .utf8),
-              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return parseDeploymentTargetFromText(result.stdout)
-        }
-
-        for entry in array {
-            if let settings = entry["buildSettings"] as? [String: Any],
-               let target = settings["IPHONEOS_DEPLOYMENT_TARGET"] as? String {
-                return target
-            }
-        }
-        return nil
+        let entries = await buildSettings(project: project, workspace: workspace, scheme: scheme)
+        return Self.selectBuildSettings(entries, scheme: scheme, platform: platform)?[platform.deploymentTargetKey] as? String
     }
 
     /// List targets from the project/workspace. Useful for finding UI test targets.
@@ -100,8 +75,18 @@ package struct ProjectDetector {
         return []
     }
 
-    /// Find UI test targets by name convention (ending in "UITests").
-    package func findUITestTargets(project: String?, workspace: String?) async -> [String] {
+    /// Find the scheme's UI test bundles, falling back to name conventions for iOS/macOS.
+    package func findUITestTargets(project: String?, workspace: String?, scheme: String? = nil, platform: CapturePlatform? = nil) async -> [String] {
+        if let scheme {
+            let entries = await buildSettings(project: project, workspace: workspace, scheme: scheme, action: "test")
+            let targets = entries.compactMap { entry -> String? in
+                guard let settings = entry["buildSettings"] as? [String: Any],
+                      settings["PRODUCT_TYPE"] as? String == "com.apple.product-type.bundle.ui-testing",
+                      platform.map({ (settings["SUPPORTED_PLATFORMS"] as? String ?? "").contains($0.buildPlatformName) }) ?? true else { return nil }
+                return entry["target"] as? String
+            }
+            if !targets.isEmpty || platform == .watchOS { return targets }
+        }
         // Try xcodebuild first
         let targets = await listTargets(project: project, workspace: workspace)
         let uiTestTargets = targets.filter { $0.hasSuffix("UITests") }
@@ -120,8 +105,8 @@ package struct ProjectDetector {
         }
     }
 
-    /// List installed iOS simulator runtimes.
-    package func listInstalledRuntimes() async -> [InstalledRuntime] {
+    /// List installed simulator runtimes for the selected platform.
+    package func listInstalledRuntimes(platform: CapturePlatform = .iOS) async -> [InstalledRuntime] {
         guard let result = try? await shell.xcrun("simctl", arguments: ["list", "runtimes", "--json"]),
               result.succeeded,
               let data = result.stdout.data(using: .utf8),
@@ -134,7 +119,7 @@ package struct ProjectDetector {
             guard let version = runtime["version"] as? String,
                   let identifier = runtime["identifier"] as? String,
                   let isAvailable = runtime["isAvailable"] as? Bool,
-                  identifier.contains("iOS") else {
+                  identifier.contains(".\(platform.rawValue)-") else {
                 return nil
             }
             return InstalledRuntime(version: version, identifier: identifier, isAvailable: isAvailable)
@@ -229,7 +214,7 @@ package struct ProjectDetector {
     /// Query xcodebuild for TARGETED_DEVICE_FAMILY and return the supported product family IDs.
     /// Returns [1] for iPhone-only, [2] for iPad-only, [1,2] for universal, nil if unavailable.
     package func detectTargetedDeviceFamilies(
-        project: String?, workspace: String?, scheme: String
+        project: String?, workspace: String?, scheme: String, platform: CapturePlatform? = nil
     ) async -> [Int]? {
         var args = ["-showBuildSettings", "-scheme", scheme, "-json"]
         if let ws = workspace {
@@ -247,46 +232,46 @@ package struct ProjectDetector {
             return nil
         }
 
-        for entry in array {
-            if let settings = entry["buildSettings"] as? [String: Any],
-               let raw = settings["TARGETED_DEVICE_FAMILY"] as? String {
-                let families = raw.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                return families.isEmpty ? nil : families
-            }
+        if let settings = Self.selectBuildSettings(array, scheme: scheme, platform: platform),
+           let raw = settings["TARGETED_DEVICE_FAMILY"] as? String {
+            let families = raw.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            return families.isEmpty ? nil : families
         }
         return nil
     }
 
-    /// Detect supported platforms from build settings (e.g. ["iphoneos", "iphonesimulator"]).
+    /// Detect the application's platforms, excluding dependency targets.
     package func detectSupportedPlatforms(
         project: String?, workspace: String?, scheme: String
     ) async -> [String] {
+        let entries = await buildSettings(project: project, workspace: workspace, scheme: scheme)
+        let settings = Self.selectBuildSettings(entries, scheme: scheme)
+        return (settings?["SUPPORTED_PLATFORMS"] as? String ?? "").split(separator: " ").map(String.init)
+    }
+
+    package static func selectBuildSettings(
+        _ entries: [[String: Any]], scheme: String, platform: CapturePlatform? = nil
+    ) -> [String: Any]? {
+        let candidates = entries.filter { entry in
+            guard let settings = entry["buildSettings"] as? [String: Any] else { return false }
+            return platform.map { (settings["SUPPORTED_PLATFORMS"] as? String ?? "").contains($0.buildPlatformName) } ?? true
+        }
+        let selected = candidates.first { $0["target"] as? String == scheme }
+            ?? candidates.first { (($0["buildSettings"] as? [String: Any])?["PRODUCT_TYPE"] as? String ?? "").hasPrefix("com.apple.product-type.application") }
+            ?? candidates.first
+        return selected?["buildSettings"] as? [String: Any]
+    }
+
+    private func buildSettings(project: String?, workspace: String?, scheme: String, action: String? = nil) async -> [[String: Any]] {
         var args = ["-showBuildSettings", "-scheme", scheme, "-json"]
-        if let ws = workspace {
-            args += ["-workspace", ws]
-        } else if let proj = project {
-            args += ["-project", proj]
-        } else {
-            return []
-        }
-
-        guard let result = try? await shell.xcodebuild(arguments: args),
-              result.succeeded else {
-            return []
-        }
-
-        guard let data = result.stdout.data(using: .utf8),
-              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return []
-        }
-
-        for entry in array {
-            if let settings = entry["buildSettings"] as? [String: Any],
-               let platforms = settings["SUPPORTED_PLATFORMS"] as? String {
-                return platforms.split(separator: " ").map { String($0) }
-            }
-        }
-        return []
+        if let action { args.append(action) }
+        if let workspace { args += ["-workspace", workspace] }
+        else if let project { args += ["-project", project] }
+        else { return [] }
+        guard let result = try? await shell.xcodebuild(arguments: args), result.succeeded,
+              let data = result.stdout.data(using: .utf8),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return entries
     }
 
     // MARK: - Private
@@ -312,15 +297,6 @@ package struct ProjectDetector {
         return nil
     }
 
-    private func parseDeploymentTargetFromText(_ output: String) -> String? {
-        for line in output.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("IPHONEOS_DEPLOYMENT_TARGET = ") {
-                return String(trimmed.dropFirst("IPHONEOS_DEPLOYMENT_TARGET = ".count))
-            }
-        }
-        return nil
-    }
 }
 
 package struct InstalledRuntime {
