@@ -944,6 +944,9 @@ package struct CaptureOrchestrator: Sendable {
         // If a persistent DerivedData path is configured, use it directly and skip cleanup.
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("storescreens-\(UUID().uuidString.prefix(8))")
+        // Screenshots still need a temporary workspace when build products use
+        // a persistent cache outside this directory.
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         let derivedData: String
         let tempDirToCleanup: URL?
         if let persistentPath = config.derivedDataPath {
