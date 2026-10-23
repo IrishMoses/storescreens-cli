@@ -75,7 +75,8 @@ package actor XcodeBuildRunner {
         testClass: String? = nil,
         testLanguage: String? = nil,
         testRegion: String? = nil,
-        platform: CapturePlatform = .iOS
+        platform: CapturePlatform = .iOS,
+        environment: [String: String]? = nil
     ) async throws -> String {
         let destination = platform.destination(udid: destinationUDID)
         var args = [
@@ -105,6 +106,7 @@ package actor XcodeBuildRunner {
         let log = openStreamingLog(name: "test-\(shortUDID)")
         let result = try await shell.xcodebuild(
             arguments: args,
+            environment: environment,
             stdoutLineHandler: log.map { makeLogLineHandler(handle: $0.0) }
         )
         if let (handle, _) = log { finalizeLog(handle: handle, stderr: result.stderr) }

@@ -88,6 +88,17 @@ final class SimulatorScreenshotTests: XCTestCase {
         XCTAssertTrue(SimulatorManager.isBlankImage(atPath: "/nonexistent/screenshot.png"))
     }
 
+    func testWatchSimpleCaptureRejectsMissingOrBlankImage() throws {
+        XCTAssertThrowsError(try WatchSimpleCapture.requireImage(at: "/nonexistent/screenshot.png"))
+        let path = try writePNG(width: 374, height: 446) { _, _ in (0, 0, 0) }
+        XCTAssertThrowsError(try WatchSimpleCapture.requireImage(at: path))
+    }
+
+    func testWatchSimpleCaptureAcceptsVisibleImage() throws {
+        let path = try writePNG(width: 374, height: 446) { _, _ in (0, 200, 0) }
+        XCTAssertNoThrow(try WatchSimpleCapture.requireImage(at: path))
+    }
+
     private func writePNG(width: Int, height: Int, pixel: (Int, Int) -> (UInt8, UInt8, UInt8)) throws -> String {
         var bytes = [UInt8](repeating: 255, count: width * height * 4)
         for y in 0..<height {

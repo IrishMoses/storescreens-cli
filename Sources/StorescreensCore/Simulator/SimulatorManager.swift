@@ -229,10 +229,10 @@ package actor SimulatorManager {
                 throw CLIError.xcrunFailed(activated.stderr)
             }
             try await boot(companion.udid)
-            await waitUntilBooted(companion.udid)
+            try await waitUntilBooted(companion.udid)
         }
         try await boot(device.udid)
-        await waitUntilBooted(device.udid)
+        try await waitUntilBooted(device.udid)
     }
 
     package static func matchingPair(watch: String, phone: String, pairs: [String: SimulatorPair]) throws -> String? {
@@ -473,7 +473,7 @@ package actor SimulatorManager {
         while ContinuousClock.now < deadline {
             guard let device = await availableDevices().first(where: { $0.udid == udid }) else { return }
             if !Self.isTransitional(device.state) {
-                if device.isBooted { await waitUntilBooted(udid) }
+                if device.isBooted { try? await waitUntilBooted(udid) }
                 return
             }
             try? await Task.sleep(for: .milliseconds(500))
@@ -487,28 +487,42 @@ package actor SimulatorManager {
         }
     }
 
-    /// Boot the device if necessary and block until it finishes booting. Wraps
-    /// `simctl bootstatus <udid> -b`, which is safe to call when the device is
-    /// already booted (it returns immediately). Ensures the simulator is fully
-    /// ready before a test runner is installed/launched, so the launch doesn't
-    /// race an unfinished boot. Best-effort: a non-zero bootstatus does not throw.
-    ///
-    /// `bootstatus` is not always enough: on the iPhone Duo runtime (Xcode
-    /// 27.1 beta) it reports the boot finished after about a second, while
-    /// the Apple logo is still on screen. So this also waits, up to
-    /// `springBoardTimeout`, until SpringBoard posts its finished-startup
-    /// state. On runtimes where `bootstatus` works that state is already set
-    /// and the check is one extra `simctl spawn`.
-    package func waitUntilBooted(_ udid: String, springBoardTimeout: Duration = .seconds(120)) async {
-        _ = try? await shell.xcrun("simctl", arguments: ["bootstatus", udid, "-b"])
-        let deadline = ContinuousClock.now.advanced(by: springBoardTimeout)
-        while ContinuousClock.now < deadline {
-            guard let result = try? await shell.xcrun(
-                "simctl", arguments: ["spawn", udid, "notifyutil", "-g", "com.apple.springboard.finishedstartup"]
-            ), result.succeeded else { return }
-            if Self.springBoardFinishedStartup(notifyutilOutput: result.stdout) { return }
-            try? await Task.sleep(for: .milliseconds(500))
+    /// Require both CoreSimulator boot completion and the system UI startup
+    /// notification. Neither alone proves that the application's UI is visible;
+    /// Watch simple capture verifies that separately with XCUITest.
+    package func waitUntilBooted(_ udid: String, springBoardTimeout: Duration = .seconds(120)) async throws {
+        try await Self.waitForStartup(udid, timeout: springBoardTimeout) { arguments, timeout in
+            try await self.shell.xcrun("simctl", arguments: arguments, timeout: timeout)
         }
+    }
+
+    package static func waitForStartup(
+        _ udid: String,
+        timeout: Duration = .seconds(120),
+        pollInterval: Duration = .milliseconds(500),
+        command: @Sendable ([String], Duration) async throws -> ProcessResult
+    ) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        try Task.checkCancellation()
+        let boot = try await command(["bootstatus", udid, "-b"], timeout)
+        try Task.checkCancellation()
+        guard boot.succeeded else {
+            throw CLIError.simulatorBootFailed(reason: "\(udid): bootstatus failed. \(boot.stderr)")
+        }
+        while ContinuousClock.now < deadline {
+            try Task.checkCancellation()
+            let result = try await command(
+                ["spawn", udid, "notifyutil", "-g", "com.apple.springboard.finishedstartup"],
+                ContinuousClock.now.duration(to: deadline)
+            )
+            try Task.checkCancellation()
+            guard result.succeeded else {
+                throw CLIError.simulatorBootFailed(reason: "\(udid): could not verify system UI startup. \(result.stderr)")
+            }
+            if Self.springBoardFinishedStartup(notifyutilOutput: result.stdout) { return }
+            try await Task.sleep(for: min(pollInterval, ContinuousClock.now.duration(to: deadline)))
+        }
+        throw CLIError.simulatorBootFailed(reason: "\(udid): timed out waiting for system UI startup; no screenshot was accepted.")
     }
 
     /// Parses `notifyutil -g com.apple.springboard.finishedstartup`, which
@@ -710,6 +724,7 @@ package actor SimulatorManager {
         // Reboot for changes to take effect
         try? await shutdown(udid)
         try await boot(udid)
+        try await waitUntilBooted(udid)
     }
 }
 

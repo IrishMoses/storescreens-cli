@@ -188,6 +188,8 @@ Capture flags include `--locale`, `--appearance`, `--only`, `--no-parallel`, `--
 
 A persistent derived-data cache retains build products; simple capture still creates and cleans its own temporary screenshot workspace.
 
+For Apple Watch, simple capture waits for simulator startup after every locale change, then runs an automatically generated XCUITest probe. The probe launches the built app with the requested locale and launch arguments, waits for it to reach the foreground with visible, labeled accessibility content, and captures the application itself. Startup errors, timeouts, app exits, and missing or blank images fail the run without replacing previous successful captures. No test target needs to be added to your project. Apps without accessible content, or screens that need specific data or navigation, should use a dedicated XCUITest capture flow with an explicit readiness assertion.
+
 A narrowed run preserves manifest entries outside its locale or appearance scope. `--only Home,Search` replaces matching screenshots while keeping other names. Full runs replace the manifest. A failed test rejects the capture even if it saved screenshots; failed captures do not publish staged images over previous successful captures. Simultaneous capture processes are rejected because the test harness uses shared cache hints.
 
 To collect results from a separate test run:
@@ -240,11 +242,16 @@ python3 scripts/smoke-capture.py
 # Requires xcodegen plus watchOS and iOS runtimes.
 python3 scripts/smoke-watch-capture.py --sanity
 python3 scripts/smoke-watch-capture.py
+# Watch simple capture: also requires Pillow.
+python3 scripts/smoke-watch-simple-capture.py --sanity
+python3 scripts/smoke-watch-simple-capture.py
 ```
 
 The simulator smoke test navigates a fixture app, captures two authentic screens, verifies partial reruns, then saves a screenshot and deliberately fails a test. It requires a nonzero capture exit and byte-identical previous output, verifies recovery, and collects the original images from a preserved `.xcresult`. It keeps its temporary artifacts for inspection.
 
 The Watch smoke test generates watch-only and companion-app fixtures. It checks configuration and harness generation, CLI and MCP capture, pairing, Watch dimensions, attachment collection, partial reruns, and preservation of previous output after a failed test. `--sanity` runs one watch-only capture first. The script removes only its own simulators and retains its artifacts.
+
+The Watch simple-capture smoke test exercises seven locales on both 42 mm and 46 mm Watch simulators, delayed visible content, app exits, and failure preservation. `--sanity` runs one size and locale first. It also checks Release builds and persistent DerivedData. The script creates and removes its own simulator pairs and retains its artifacts.
 
 Banner assets are generated from the original app icon in `assets/logo.png` and bundled OFL-licensed IBM Plex Sans fonts. Run `python3 scripts/generate-banner.py` after changing the tagline or artwork; it requires `fonttools[woff]`, `cairosvg`, and the Cairo library. The generator produces the README banner, an SVG source, and the social image.
 

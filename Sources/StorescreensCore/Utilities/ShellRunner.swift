@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 package struct ProcessResult: Sendable {
     package let stdout: String
@@ -15,6 +16,7 @@ package actor ShellRunner {
         arguments: [String] = [],
         environment: [String: String]? = nil,
         workingDirectory: String? = nil,
+        timeout: Duration? = nil,
         stdoutLineHandler: (@Sendable (String) -> Void)? = nil
     ) async throws -> ProcessResult {
         let process = Process()
@@ -32,6 +34,24 @@ package actor ShellRunner {
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+
+        let timedOut = AtomicFlag()
+        var deadlineTask: Task<Void, Never>?
+        defer { deadlineTask?.cancel() }
+        func startDeadline() {
+            guard let timeout else { return }
+            deadlineTask = Task.detached {
+                do { try await Task.sleep(for: timeout) } catch { return }
+                guard process.isRunning else { return }
+                _ = timedOut.setIfUnset()
+                process.terminate()
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            }
+        }
+        func errorOutput(_ output: String) -> String {
+            timedOut.isSet ? "Command timed out.\n" + output : output
+        }
 
         if let stdoutLineHandler {
             // Stream stdout lines in real-time via readabilityHandler,
@@ -91,6 +111,7 @@ package actor ShellRunner {
             }
 
             try process.run()
+            startDeadline()
 
             // Wait for stdout EOF, stderr EOF, and process termination.
             // All three are tracked in the DispatchGroup so this single await
@@ -106,11 +127,12 @@ package actor ShellRunner {
 
             return ProcessResult(
                 stdout: stdoutCollector.string,
-                stderr: stderrCollector.string,
-                exitCode: process.terminationStatus
+                stderr: errorOutput(stderrCollector.string),
+                exitCode: timedOut.isSet ? -1 : process.terminationStatus
             )
         } else {
             try process.run()
+            startDeadline()
 
             let stdoutData = try stdoutPipe.fileHandleForReading.readToEnd() ?? Data()
             let stderrData = try stderrPipe.fileHandleForReading.readToEnd() ?? Data()
@@ -119,21 +141,22 @@ package actor ShellRunner {
 
             return ProcessResult(
                 stdout: String(data: stdoutData, encoding: .utf8) ?? "",
-                stderr: String(data: stderrData, encoding: .utf8) ?? "",
-                exitCode: process.terminationStatus
+                stderr: errorOutput(String(data: stderrData, encoding: .utf8) ?? ""),
+                exitCode: timedOut.isSet ? -1 : process.terminationStatus
             )
         }
     }
 
-    package func xcrun(_ tool: String, arguments: [String] = []) async throws -> ProcessResult {
-        try await run("/usr/bin/xcrun", arguments: [tool] + arguments)
+    package func xcrun(_ tool: String, arguments: [String] = [], timeout: Duration? = nil) async throws -> ProcessResult {
+        try await run("/usr/bin/xcrun", arguments: [tool] + arguments, timeout: timeout)
     }
 
     package func xcodebuild(
         arguments: [String],
+        environment: [String: String]? = nil,
         stdoutLineHandler: (@Sendable (String) -> Void)? = nil
     ) async throws -> ProcessResult {
-        try await run("/usr/bin/xcodebuild", arguments: arguments, stdoutLineHandler: stdoutLineHandler)
+        try await run("/usr/bin/xcodebuild", arguments: arguments, environment: environment, stdoutLineHandler: stdoutLineHandler)
     }
 }
 
@@ -141,6 +164,12 @@ package actor ShellRunner {
 private final class AtomicFlag: @unchecked Sendable {
     private var flag = false
     private let lock = NSLock()
+
+    var isSet: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return flag
+    }
 
     /// Sets the flag and returns `true` if it was previously unset.
     /// Returns `false` if already set (i.e. duplicate call).

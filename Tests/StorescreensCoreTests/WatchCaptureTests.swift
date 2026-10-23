@@ -2,6 +2,20 @@ import XCTest
 @testable import StorescreensCore
 
 final class WatchCaptureTests: XCTestCase {
+    func testSimpleCaptureForwardsLocaleAndPreservesCustomArguments() {
+        let arguments = ["--uitesting", "A quoted \"value\""]
+        XCTAssertEqual(WatchSimpleCapture.launchArguments(arguments, locale: nil), arguments)
+        XCTAssertEqual(WatchSimpleCapture.launchArguments(arguments, locale: "fr-FR"),
+                       arguments + ["-AppleLanguages", "(fr)", "-AppleLocale", "fr_FR"])
+    }
+
+    func testSimpleCaptureKeepsLanguageScripts() {
+        XCTAssertEqual(WatchSimpleCapture.launchArguments([], locale: "zh-Hant-TW"),
+                       ["-AppleLanguages", "(zh-Hant)", "-AppleLocale", "zh_Hant_TW"])
+        XCTAssertEqual(WatchSimpleCapture.launchArguments([], locale: "sr-Latn"),
+                       ["-AppleLanguages", "(sr-Latn)", "-AppleLocale", "sr_Latn"])
+    }
+
     private func watch() -> ResolvedDevice {
         ResolvedDevice(simulatorName: "Test Watch", udid: "watch", deviceTypeIdentifier: "watch",
                        appStoreSize: AppStoreScreenSize(width: 416, height: 496, productFamily: 4))

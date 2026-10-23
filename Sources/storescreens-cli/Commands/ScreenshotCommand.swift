@@ -54,7 +54,7 @@ struct ScreenshotCommand: AsyncParsableCommand {
                 try await manager.boot(device.udid)
                 // `boot` returns while the Apple logo is still up; wait for the
                 // boot to finish, then give the home screen a moment to draw.
-                await manager.waitUntilBooted(device.udid)
+                try await manager.waitUntilBooted(device.udid)
                 try await Task.sleep(nanoseconds: 3_000_000_000)
             } else {
                 throw CLIError.simulatorBootFailed(reason: "Simulator '\(device.name)' is not booted. Pass --boot to boot it automatically.")

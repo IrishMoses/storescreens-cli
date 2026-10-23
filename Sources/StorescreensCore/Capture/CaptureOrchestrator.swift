@@ -1011,6 +1011,17 @@ package struct CaptureOrchestrator: Sendable {
         // Detect bundle ID from Info.plist
         let bundleId = detectBundleId(appPath: appPath) ?? config.scheme
 
+        let watchCapture: WatchSimpleCapture?
+        if firstDevice.platform == .watchOS {
+            await eventHandler(.phase("Building Watch application-readiness check..."))
+            watchCapture = try await WatchSimpleCapture(
+                workspace: tempDir.appendingPathComponent("WatchReadiness"), buildRunner: buildRunner,
+                resultDirectory: config.resultBundleDir.map { URL(fileURLWithPath: $0) }
+            )
+        } else {
+            watchCapture = nil
+        }
+
         let locales: [String?] = (config.locales?.isEmpty ?? true)
             ? [nil]
             : config.locales!.map { $0 as String? }
@@ -1060,15 +1071,20 @@ package struct CaptureOrchestrator: Sendable {
                             try await simulatorManager.install(device.udid, appPath: appPath)
 
                             let launchArgs = config.launchArguments ?? ["--uitesting"]
-                            try await simulatorManager.launch(device.udid, bundleId: bundleId, arguments: launchArgs)
-
-                            // Wait for app to render
-                            try await Task.sleep(for: .seconds(3))
-
                             let screenshotName = "screenshot_\(String(format: "%03d", index + 1))"
-                            let tempScreenshot = tempDir.appendingPathComponent("\(screenshotName).png").path
+                            let tempScreenshot = tempDir.appendingPathComponent("\(UUID().uuidString)-\(screenshotName).png").path
 
-                            try await simulatorManager.takeScreenshot(device.udid, outputPath: tempScreenshot)
+                            if let watchCapture {
+                                await eventHandler(.deviceLog(device: devName, message: "Waiting for visible Watch application content..."))
+                                try await watchCapture.capture(
+                                    udid: device.udid, bundleID: bundleId, arguments: launchArgs,
+                                    locale: currentLocale, outputPath: tempScreenshot
+                                )
+                            } else {
+                                try await simulatorManager.launch(device.udid, bundleId: bundleId, arguments: launchArgs)
+                                try await Task.sleep(for: .seconds(3))
+                                try await simulatorManager.takeScreenshot(device.udid, outputPath: tempScreenshot)
+                            }
 
                             let (screenshot, size) = try outputOrganizer.organizeSimpleScreenshot(
                                 sourcePath: tempScreenshot,
