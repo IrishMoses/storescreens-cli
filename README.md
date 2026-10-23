@@ -27,7 +27,7 @@ Prebuilt binaries require an Apple silicon Mac with macOS 14 or later. Capture r
 ### mise
 
 ```sh
-mise use -g github:ciscoriordan/storescreens-cli@4.1.0
+mise use -g github:ciscoriordan/storescreens-cli@4.1.1
 storescreens --version
 ```
 
