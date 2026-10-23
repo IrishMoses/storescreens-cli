@@ -11,7 +11,7 @@ final class WatchCaptureTests: XCTestCase {
         XCTAssertEqual(watch().platform, .watchOS)
         XCTAssertEqual(watch().platform.destination(udid: "watch"), "platform=watchOS Simulator,id=watch")
         XCTAssertEqual(CapturePlatform.watchOS.destination(), "generic/platform=watchOS Simulator")
-        XCTAssertEqual(CapturePlatform.watchOS.productsDirectory, "Debug-watchsimulator")
+        XCTAssertEqual(CapturePlatform.watchOS.buildPlatformName, "watchsimulator")
         XCTAssertEqual(CapturePlatform.watchOS.deploymentTargetKey, "WATCHOS_DEPLOYMENT_TARGET")
         XCTAssertFalse(CapturePlatform.watchOS.supportsStatusBarOverride)
         XCTAssertFalse(CapturePlatform.watchOS.supportsSimulatorAppearance)
@@ -90,14 +90,46 @@ final class WatchCaptureTests: XCTestCase {
         XCTAssertNil(try SimulatorManager.matchingPair(watch: "another-watch", phone: "phone", pairs: pairs))
     }
 
-    func testWatchAppLookupIgnoresPhoneBuildProducts() async throws {
+    func testWatchAppLookupUsesReleaseSettingsInsteadOfStaleDebugOrPhoneProducts() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let phone = root.appendingPathComponent("Build/Products/Debug-iphonesimulator/Phone.app")
-        let watch = root.appendingPathComponent("Build/Products/Debug-watchsimulator/Watch.app")
+        let debug = root.appendingPathComponent("Build/Products/Debug-watchsimulator/Watch.app")
+        let watch = root.appendingPathComponent("Build/Products/Release-watchsimulator/Watch.app")
         try FileManager.default.createDirectory(at: phone, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: debug, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: watch, withIntermediateDirectories: true)
-        let found = try await XcodeBuildRunner().findAppBundle(in: root.path, platform: .watchOS)
+        let entries: [[String: Any]] = [
+            ["target": "Phone", "buildSettings": ["PRODUCT_TYPE": "com.apple.product-type.application", "SUPPORTED_PLATFORMS": "iphonesimulator", "TARGET_BUILD_DIR": phone.deletingLastPathComponent().path, "FULL_PRODUCT_NAME": "Phone.app"]],
+            ["target": "WatchApp", "buildSettings": ["PRODUCT_TYPE": "com.apple.product-type.application", "SUPPORTED_PLATFORMS": "watchsimulator", "TARGET_BUILD_DIR": watch.deletingLastPathComponent().path, "FULL_PRODUCT_NAME": "Watch.app"]]
+        ]
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: entries), as: UTF8.self)
+        let found = try XcodeBuildRunner.builtAppBundle(from: json, scheme: "WatchApp", platform: .watchOS)
         XCTAssertEqual(found, watch.path)
+    }
+
+    func testAppLookupSupportsCustomProductsDirectories() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for platform in CapturePlatform.allCases {
+            let app = root.appendingPathComponent("custom-\(platform.rawValue)/App.app")
+            try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+            let entries: [[String: Any]] = [["target": "App", "buildSettings": [
+                "PRODUCT_TYPE": "com.apple.product-type.application", "SUPPORTED_PLATFORMS": platform.buildPlatformName,
+                "TARGET_BUILD_DIR": app.deletingLastPathComponent().path, "FULL_PRODUCT_NAME": "App.app"]]]
+            let json = String(decoding: try JSONSerialization.data(withJSONObject: entries), as: UTF8.self)
+            XCTAssertEqual(try XcodeBuildRunner.builtAppBundle(from: json, scheme: "App", platform: platform), app.path)
+            try FileManager.default.removeItem(at: app)
+            XCTAssertThrowsError(try XcodeBuildRunner.builtAppBundle(from: json, scheme: "App", platform: platform))
+        }
+    }
+
+    func testAppLookupRejectsTestRunnersAndMissingSettings() throws {
+        let entries: [[String: Any]] = [["target": "Tests", "buildSettings": [
+            "PRODUCT_TYPE": "com.apple.product-type.bundle.ui-testing", "SUPPORTED_PLATFORMS": "watchsimulator",
+            "TARGET_BUILD_DIR": "/tmp", "FULL_PRODUCT_NAME": "Tests-Runner.app"]]]
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: entries), as: UTF8.self)
+        XCTAssertThrowsError(try XcodeBuildRunner.builtAppBundle(from: json, scheme: "Tests", platform: .watchOS))
+        XCTAssertThrowsError(try XcodeBuildRunner.builtAppBundle(from: "[]", scheme: "App", platform: .watchOS))
     }
 }

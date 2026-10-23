@@ -259,7 +259,11 @@ package actor XcodeBuildRunner {
             throw CLIError.buildFailed(output: result.stdout + "\n" + result.stderr)
         }
 
-        return try findAppBundle(in: derivedDataPath, platform: platform)
+        // A scheme can build Release or use a custom products directory. Resolve the
+        // product from the same destination's settings instead of guessing Debug.
+        return try await findAppBundle(project: project, workspace: workspace, scheme: scheme,
+                                       destinationUDID: destinationUDID, derivedDataPath: derivedDataPath,
+                                       platform: platform)
     }
 
     /// List available schemes for a project/workspace.
@@ -343,24 +347,37 @@ package actor XcodeBuildRunner {
         return (productsDir as NSString).appendingPathComponent(xctestrun)
     }
 
-    package func findAppBundle(in derivedDataPath: String, platform: CapturePlatform = .iOS) throws -> String {
-        let fm = FileManager.default
-        let searchDirs = [(derivedDataPath as NSString).appendingPathComponent("Build/Products/\(platform.productsDirectory)")]
+    package func findAppBundle(
+        project: String?, workspace: String?, scheme: String, destinationUDID: String,
+        derivedDataPath: String, platform: CapturePlatform, buildForTesting: Bool = false
+    ) async throws -> String {
+        var args = [buildForTesting ? "build-for-testing" : "build", "-showBuildSettings", "-json",
+                    "-scheme", scheme, "-derivedDataPath", derivedDataPath,
+                    "-destination", platform.destination(udid: destinationUDID),
+                    "CODE_SIGNING_ALLOWED=\(codeSigningAllowed ? "YES" : "NO")"]
+        if let workspace { args += ["-workspace", workspace] }
+        else if let project { args += ["-project", project] }
+        let result = try await shell.xcodebuild(arguments: args)
+        guard result.succeeded else { throw CLIError.buildFailed(output: result.stderr) }
+        return try Self.builtAppBundle(from: result.stdout, scheme: scheme, platform: platform)
+    }
 
-        for debugDir in searchDirs {
-            guard let contents = try? fm.contentsOfDirectory(atPath: debugDir) else {
-                continue
-            }
-
-            let appBundles = contents.filter { $0.hasSuffix(".app") }
-            // Prefer bundles that aren't UITest runners (e.g. skip CCWCalcUITests-Runner.app)
-            let app = appBundles.first(where: { !$0.contains("UITests") && !$0.contains("-Runner") })
-                    ?? appBundles.first
-            if let app {
-                return (debugDir as NSString).appendingPathComponent(app)
-            }
+    package static func builtAppBundle(
+        from json: String, scheme: String, platform: CapturePlatform
+    ) throws -> String {
+        guard let data = json.data(using: .utf8),
+              let entries = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let settings = ProjectDetector.selectBuildSettings(entries, scheme: scheme, platform: platform),
+              let type = settings["PRODUCT_TYPE"] as? String, type.hasPrefix("com.apple.product-type.application"),
+              let directory = settings["TARGET_BUILD_DIR"] as? String, !directory.isEmpty,
+              let product = settings["FULL_PRODUCT_NAME"] as? String, product.hasSuffix(".app") else {
+            throw CLIError.buildFailed(output: "Could not resolve the application product from Xcode build settings")
         }
-
-        throw CLIError.buildFailed(output: "No .app bundle found in build products")
+        let path = (directory as NSString).appendingPathComponent(product)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw CLIError.buildFailed(output: "Built application is missing at \(path)")
+        }
+        return path
     }
 }

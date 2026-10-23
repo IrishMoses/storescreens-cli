@@ -18,14 +18,6 @@ package enum CapturePlatform: String, Sendable, CaseIterable {
             ?? "generic/platform=\(destinationName)"
     }
 
-    package var productsDirectory: String {
-        switch self {
-        case .iOS: return "Debug-iphonesimulator"
-        case .watchOS: return "Debug-watchsimulator"
-        case .macOS: return "Debug"
-        }
-    }
-
     package var deploymentTargetKey: String {
         switch self {
         case .iOS: return "IPHONEOS_DEPLOYMENT_TARGET"

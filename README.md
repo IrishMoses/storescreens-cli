@@ -184,7 +184,7 @@ Watch captures use dark appearance, including when `appearances` is omitted. Lig
 | `screenshot` | Capture a running simulator's current screen |
 | `migrate-config` | Preserve a version 3 configuration and write capture settings |
 
-Capture flags include `--locale`, `--appearance`, `--only`, `--no-parallel`, `--retries`, `--derived-data-path`, `--result-bundle-dir`, `--skip-check`, and `--verbose`. `--xcresult` collects XCTAttachments instead of filesystem PNGs. `--mode simple` captures an installed launch state after building the app; it does not navigate through screens. `--keep-alive` applies to simple capture.
+Capture flags include `--locale`, `--appearance`, `--only`, `--no-parallel`, `--retries`, `--derived-data-path`, `--result-bundle-dir`, `--skip-check`, and `--verbose`. `--xcresult` collects XCTAttachments instead of filesystem PNGs. `--mode simple` captures an installed launch state after building the app; it does not navigate through screens. It uses Xcode's build settings to locate the actual app, including Release and custom product directories, without selecting a stale Debug build. `--keep-alive` applies to simple capture.
 
 A narrowed run preserves manifest entries outside its locale or appearance scope. `--only Home,Search` replaces matching screenshots while keeping other names. Full runs replace the manifest. A failed test rejects the capture even if it saved screenshots; failed captures do not publish staged images over previous successful captures. Simultaneous capture processes are rejected because the test harness uses shared cache hints.
 

@@ -459,10 +459,14 @@ package struct CaptureOrchestrator: Sendable {
             let baseDerivedDataURL = config.derivedDataPath != nil
                 ? URL(fileURLWithPath: derivedData)
                 : tempDir
-            let firstDeviceDerivedData = resolvedDevices.first.map {
+            let firstDeviceDerivedData = runSequentially ? derivedData : resolvedDevices.first.map {
                 baseDerivedDataURL.appendingPathComponent("DerivedData-\($0.udid)").path
             } ?? derivedData
-            let builtAppPath = try? await buildRunner.findAppBundle(in: firstDeviceDerivedData, platform: resolvedDevices[0].platform)
+            let builtAppPath = try? await buildRunner.findAppBundle(
+                project: config.project, workspace: config.workspace, scheme: config.scheme,
+                destinationUDID: resolvedDevices[0].udid, derivedDataPath: firstDeviceDerivedData,
+                platform: resolvedDevices[0].platform, buildForTesting: true
+            )
             let displayName = builtAppPath.flatMap { detectDisplayName(appPath: $0) }
 
             // Write manifest
