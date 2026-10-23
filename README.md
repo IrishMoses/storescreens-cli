@@ -200,6 +200,8 @@ storescreens collect --result-bundle TestResults.xcresult \
 
 Set `result_bundle_dir` to preserve original result bundles and test diagnostics in a unique directory per invocation. Without it, result bundles are temporary. Filesystem PNGs remain the primary capture path.
 
+Attachment extraction uses a fresh temporary directory for each test result, including additional locales and retries, so an earlier export cannot block a later capture.
+
 Capture disables Xcode's additional simulator diagnostics collection after failed tests. Failure messages and screenshot attachments remain in the `.xcresult`; the capture result does not wait for a full simulator diagnostics archive.
 
 ## Handoff to Koubou and ASC CLI

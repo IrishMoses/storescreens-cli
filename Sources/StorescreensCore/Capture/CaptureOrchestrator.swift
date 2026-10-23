@@ -823,8 +823,10 @@ package struct CaptureOrchestrator: Sendable {
         if xcresult && FileManager.default.fileExists(atPath: resultPath) {
             await logLine("  Extracting from xcresult...")
             let xcresultParser = XCResultParser()
+            // Each locale and retry exports a new manifest. xcresulttool refuses
+            // an existing manifest, even when the preceding test run passed.
             let rawExportDir = (tempDir.path as NSString)
-                .appendingPathComponent("xcresult-export-\(device.udid)-\(appearance)")
+                .appendingPathComponent("xcresult-export-\(UUID().uuidString)")
             do {
                 let attachments = try await xcresultParser.exportAttachments(
                     resultBundlePath: resultPath,
